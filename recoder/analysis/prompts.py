@@ -241,17 +241,55 @@ any other text.
 """
 
 
-def build_consolidation_prompt(source_name: str, target_name: str) -> str:
-    """Prompt for distilling a worktree store into its parent store (Piece B).
+def build_consolidation_prompt(
+    source_name: str,
+    target_name: str,
+    since_commit_id: str | None = None,
+) -> str:
+    """Prompt for the incremental checkpoint sync of a worktree store (Piece B).
 
     Two stores are mounted: ``ccr_source`` (READ-ONLY: gcc_search + gcc_context)
-    and ``ccr_target`` (gcc_search + gcc_context + gcc_commit). The session reads
-    the source's full history and writes 3-8 milestone commits onto the target.
+    and ``ccr_target`` (gcc_search + gcc_context + gcc_commit). This is an
+    incremental sync of a *living* store: only source commits NEWER than
+    ``since_commit_id`` are distilled onto the target. When ``since_commit_id`` is
+    None this is the first sync and the whole history is in scope.
+
+    The reply must end with a ``HIGHEST_SOURCE_COMMIT: C<nnn>`` marker line so the
+    caller can advance the per-source watermark. When ``since_commit_id`` is set
+    and there are no newer commits, the session replies ``NO_NEW_COMMITS since
+    <id>`` and writes nothing.
     """
     today = _date.today().isoformat()
-    return f"""You are consolidating one CCR project-memory store into another so a
-fragmented worktree's history is preserved in its parent project before the
-worktree store is archived.
+
+    if since_commit_id:
+        scope = f"""## Step 1 — read ONLY the new source commits
+This is an incremental checkpoint sync. This source has already been consolidated
+up to commit {since_commit_id}. Examine ONLY source commits whose id is GREATER
+than {since_commit_id}. Call `mcp__ccr_source__gcc_context` at level=4 (and
+level=5 with search terms for specific threads) with a generous `result_limit`
+and `include_summaries=true`; commit ids (e.g. "C047") are shown at these levels.
+Ignore every commit with an id at or below {since_commit_id}.
+
+If there are NO source commits newer than {since_commit_id}, do NOT call
+`mcp__ccr_target__gcc_commit` at all. Reply with EXACTLY this single line and
+nothing else:
+
+    NO_NEW_COMMITS since {since_commit_id}
+"""
+    else:
+        scope = """## Step 1 — read the source's full history
+This is the FIRST consolidation of this source, so its entire history is in
+scope. Call `mcp__ccr_source__gcc_context` at a deep level (level=4, and level=5
+with search terms for specific threads) with a generous `result_limit` and
+`include_summaries=true` to page through the ENTIRE source history — every
+milestone, decision, and dead end. Commit ids (e.g. "C047") are shown at these
+levels. Use `mcp__ccr_source__gcc_search` to fill in gaps around notable topics.
+Do not summarize until you have surveyed it all.
+"""
+
+    return f"""You are incrementally syncing one CCR project-memory store into another
+so a living worktree's newest work is checkpointed into its parent project. The
+source store stays alive and untouched; you only distill its NEW commits here.
 
 ## Mounted stores
 - SOURCE = "{source_name}" — READ-ONLY. Read it with `mcp__ccr_source__gcc_search`
@@ -259,18 +297,12 @@ worktree store is archived.
 - TARGET = "{target_name}" — write here with `mcp__ccr_target__gcc_commit`
   (you may also `mcp__ccr_target__gcc_search` / `mcp__ccr_target__gcc_context`).
 
-## Step 1 — read the source's full history
-Call `mcp__ccr_source__gcc_context` at a deep level (level=4, and level=5 with
-search terms for specific threads) with a generous `result_limit` and
-`include_summaries=true` to page through the ENTIRE source history — every
-milestone, decision, and dead end. Use `mcp__ccr_source__gcc_search` to fill in
-gaps around notable topics. Do not summarize until you have surveyed it all.
-
-## Step 2 — distill into milestone commits on the target
-Write between 3 and 8 `mcp__ccr_target__gcc_commit` calls. Each commit must cover
-one coherent theme (a feature shipped, a cluster of key decisions, a pattern or
-convention learned, or a dead end worth remembering — NOT one-per-original-commit).
-For each commit:
+{scope}
+## Step 2 — distill the new work into milestone commits on the target
+Write between 1 and 5 `mcp__ccr_target__gcc_commit` calls covering ONLY the new
+source work in scope. Each commit must cover one coherent theme (a feature
+shipped, a cluster of key decisions, a pattern or convention learned, or a dead
+end worth remembering — NOT one-per-original-commit). For each commit:
 - title: prefix with "[from {source_name}] " then a concise theme title.
 - what: the substance — what was built/decided/learned for that theme.
 - why: include the consolidation provenance — "consolidated from {source_name} on
@@ -279,6 +311,9 @@ For each commit:
 - next_step: a genuinely open thread from the source if one exists, else "".
 
 ## Step 3 — reply
-After all commits succeed, reply with ONLY the list of target commit ids you
-created (e.g. "C081, C082, C083"). Nothing else.
+After all commits succeed, reply with the list of target commit ids you created
+(e.g. "C081, C082, C083"), and END your reply with a line reporting the HIGHEST
+source commit id you examined, in EXACTLY this format (nothing after it):
+
+    HIGHEST_SOURCE_COMMIT: C<nnn>
 """

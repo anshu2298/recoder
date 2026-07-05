@@ -52,6 +52,13 @@ class Config:
     # Base dir under which a consolidated source store is archived (never
     # deleted): <consolidation_archive_dir>/<source-name>-<YYYYMMDD>.
     consolidation_archive_dir: Path = Path(r"G:\recoder\archives\ccr")
+    # Per-source incremental watermark state (last consolidated source commit
+    # id, timestamp, run count) keyed by normalized source path.
+    consolidation_state_path: Path = Path(r"G:\recoder\consolidation-state.json")
+    # Named source->target groups for `recoder consolidate-group <name>`. Shape:
+    #   {"<group>": {"target": str, "sources": [str, ...]}}. Loaded verbatim from
+    #   the [consolidation_groups.<name>] tables in recoder.toml.
+    consolidation_groups: dict = field(default_factory=dict)
 
     # --- Gladia hosted STT (default engine, spec §4.2 step 1) ----------------
     # API key resolves from env GLADIA_API_KEY, with a recoder.toml override.
@@ -78,6 +85,8 @@ _SCALAR_KEYS = {
     "routing_recency_days",
     "routing_max_mounts",
     "consolidation_archive_dir",
+    "consolidation_state_path",
+    "consolidation_groups",
     "gladia_api_key",
     "gladia_base_url",
     "gladia_poll_interval_s",
@@ -104,8 +113,16 @@ def load_config(override_file: Path | None = None) -> Config:
     for key, value in data.items():
         if key not in _SCALAR_KEYS:
             continue
-        if key in ("meetings_dir", "ccr_registry_path", "consolidation_archive_dir"):
+        if key in (
+            "meetings_dir",
+            "ccr_registry_path",
+            "consolidation_archive_dir",
+            "consolidation_state_path",
+        ):
             updates[key] = Path(value)
+        elif key == "consolidation_groups":
+            # A TOML table of tables; keep it a plain dict (tolerate absence).
+            updates[key] = dict(value) if isinstance(value, dict) else {}
         else:
             updates[key] = value
 

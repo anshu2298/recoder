@@ -170,10 +170,11 @@ def memory_clean(
 def consolidate(
     source: str = typer.Argument(..., help="Worktree project dir to consolidate FROM."),
     target: str = typer.Argument(..., help="Parent project dir to consolidate INTO."),
-    apply: bool = typer.Option(
+    archive: bool = typer.Option(
         False,
-        "--apply/--dry-run",
-        help="Archive the source store + deregister it (default: dry run).",
+        "--archive",
+        help="After syncing, archive the source store + deregister it "
+        "(default: source stays alive and registered).",
     ),
     archive_dir: str = typer.Option(
         None, "--archive-dir", help="Override the archive base directory."
@@ -182,17 +183,25 @@ def consolidate(
         False, "--yes", "-y", help="Skip the confirmation prompt before archiving."
     ),
 ) -> None:
-    """Distill a worktree's CCR memory into its parent project's store."""
+    """Incrementally sync a worktree's NEW CCR commits into its parent store.
+
+    Distills only source commits newer than the per-source watermark into 1-5
+    milestone commits on the target and advances the watermark. The source store
+    stays alive and registered. ``--archive`` additionally archives + deregisters
+    the source after syncing.
+    """
     from recoder.analysis.consolidate import ConsolidationError, consolidate as _run
     from recoder.config import load_config
 
     config = load_config()
     src = Path(source)
     tgt = Path(target)
+    mode = "archive" if archive else "incremental"
 
-    if apply and not yes:
+    if archive and not yes:
         typer.confirm(
-            f"Apply will ARCHIVE {src / '.ccr'} and deregister {src.name}. Continue?",
+            f"--archive will ARCHIVE {src / '.ccr'} and deregister {src.name} "
+            "after syncing. Continue?",
             abort=True,
         )
 
@@ -201,25 +210,92 @@ def consolidate(
             src,
             tgt,
             config,
+            mode=mode,
             archive_dir=Path(archive_dir) if archive_dir else None,
-            apply=apply,
         )
     except ConsolidationError as exc:
         typer.echo(f"Consolidation failed: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(f"Distilled {src.name} -> {tgt.name}")
-    typer.echo(f"Target commits created: {', '.join(result.commit_ids)}")
-    if apply:
+    if result.no_new:
+        since = result.highest_source_commit or "start"
+        typer.echo(f"{src.name} -> {tgt.name}: no new commits since {since}.")
+        return
+
+    typer.echo(
+        f"Synced {src.name} -> {tgt.name}: {len(result.commit_ids)} commit(s) "
+        f"[{', '.join(result.commit_ids)}]; watermark now "
+        f"{result.highest_source_commit}."
+    )
+    if archive:
         typer.echo(f"Archived source store to: {result.archived_to}")
         typer.echo(
             "Registry entry removed."
             if result.registry_updated
             else "Registry entry not found (nothing to remove)."
         )
-    else:
-        typer.echo("DRY RUN -- source store left in place, registry untouched.")
-        typer.echo("Re-run with --apply to archive + deregister the source.")
+
+
+@app.command(name="consolidate-group")
+def consolidate_group(
+    name: str = typer.Argument(..., help="Name of the [consolidation_groups.*] table."),
+    archive: bool = typer.Option(
+        False,
+        "--archive",
+        help="Archive + deregister each source after syncing.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt before archiving."
+    ),
+) -> None:
+    """Sync every source in a named group against the group's target.
+
+    Sources are processed sequentially and independently; individual failures are
+    reported and skipped past. Exit code equals the number of failed sources.
+    """
+    from recoder.analysis.consolidate import consolidate_group as _run_group
+    from recoder.config import load_config
+
+    config = load_config()
+    groups = config.consolidation_groups or {}
+    if name not in groups:
+        available = ", ".join(sorted(groups)) or "(none configured)"
+        typer.echo(
+            f"Unknown consolidation group: {name!r}. Available: {available}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    group = groups[name]
+    mode = "archive" if archive else "incremental"
+    if archive and not yes:
+        typer.confirm(
+            f"--archive will archive + deregister every source in group "
+            f"{name!r} after syncing. Continue?",
+            abort=True,
+        )
+
+    typer.echo(f"Consolidating group {name!r} -> {group.get('target')}")
+    outcomes = _run_group(name, config, mode=mode)
+
+    failures = 0
+    for outcome in outcomes:
+        label = Path(outcome.source).name
+        if outcome.error is not None:
+            failures += 1
+            typer.echo(f"  {label}: ERROR {outcome.error}", err=True)
+        elif outcome.result is not None and outcome.result.no_new:
+            since = outcome.result.highest_source_commit or "start"
+            typer.echo(f"  {label}: NO NEW (since {since})")
+        elif outcome.result is not None:
+            typer.echo(
+                f"  {label}: {len(outcome.result.commit_ids)} commit(s) -> "
+                f"watermark {outcome.result.highest_source_commit}"
+            )
+
+    ok = len(outcomes) - failures
+    typer.echo(f"Done: {ok} ok, {failures} failed.")
+    raise typer.Exit(code=failures)
 
 
 @app.command(name="app")

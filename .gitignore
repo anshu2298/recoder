@@ -10,3 +10,4 @@ recoder.toml
 # CCR context directory
 .ccr/
 archives/
+consolidation-state.json

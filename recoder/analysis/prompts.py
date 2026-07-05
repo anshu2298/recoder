@@ -54,20 +54,23 @@ def render_frame_table(frame_inventory: list[dict]) -> str:
     fallback grab may show unrelated desktop content rather than the meeting.
     """
     header = (
-        "| Filename | Clock time | Window title | Fallback fullscreen |\n"
-        "| --- | --- | --- | --- |"
+        "| Filename | Clock time | Window title | Source | Fallback fullscreen |\n"
+        "| --- | --- | --- | --- | --- |"
     )
     if not frame_inventory:
-        return header + "\n| (no frames captured) | | | |"
+        return header + "\n| (no frames captured) | | | | |"
 
     rows: list[str] = []
     for entry in frame_inventory:
         filename = str(entry.get("file") or entry.get("filename") or "").strip()
         wall = str(entry.get("wall") or "").strip()
         title = str(entry.get("window_title") or "").strip().replace("|", "\\|")
+        source = str(entry.get("source") or "window")
+        if entry.get("presenting"):
+            source += " (screen-share active)"
         fallback = bool(entry.get("fallback_fullscreen", False))
         flag = "yes" if fallback else "no"
-        rows.append(f"| {filename} | {wall} | {title} | {flag} |")
+        rows.append(f"| {filename} | {wall} | {title} | {source} | {flag} |")
     return header + "\n" + "\n".join(rows)
 
 
@@ -174,6 +177,12 @@ instead of the meeting. The "Fallback fullscreen" column flags full-screen
 fallback grabs, which are the most likely to be unrelated. Treat frames as
 supporting evidence, not ground truth, and ignore ones that are clearly
 off-topic desktop content.
+
+Frames whose Source is `monitor<N>` were captured from the user's OTHER
+screens while a screen-share was active — when the user was presenting, these
+show the content being presented (slides, demos, code) and are usually the
+most informative frames. A monitor frame can still be an unshared side screen,
+so ignore any that are clearly unrelated to the discussion.
 
 {frame_table}
 

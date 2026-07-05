@@ -43,6 +43,25 @@ class Config:
         ]
     )
 
+    # While a screen-share is detected (see presenting_indicator_patterns),
+    # additionally snapshot every physical monitor other than the one holding
+    # the meeting window — that is where the content being presented lives.
+    capture_monitors_when_presenting: bool = True
+    # Window titles that indicate an active screen-share. Chrome/Edge show an
+    # "<site> is sharing your screen" pill; Zoom/Teams spawn share toolbars.
+    presenting_indicator_patterns: list[str] = field(
+        default_factory=lambda: [
+            "is sharing your screen",
+            "is sharing a window",
+            "is sharing a tab",
+            "share toolbar",
+            "share statusbar",
+            "sharing toolbar",
+            "screen sharing meeting controls",
+            "stop sharing",
+        ]
+    )
+
     ccr_mcp_command: str = _CCR_PYTHON
     ccr_mcp_args: list[str] = field(
         default_factory=lambda: ["-m", "ccr.mcp_server", "--project", str(_REPO_ROOT)]
@@ -87,6 +106,8 @@ _SCALAR_KEYS = {
     "jpeg_quality",
     "max_frame_width",
     "window_title_patterns",
+    "capture_monitors_when_presenting",
+    "presenting_indicator_patterns",
     "ccr_mcp_command",
     "ccr_mcp_args",
     "ccr_registry_path",

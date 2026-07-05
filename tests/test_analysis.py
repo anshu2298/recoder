@@ -160,6 +160,22 @@ def test_analysis_prompt_renders_transcript_and_frames_and_ccr() -> None:
     assert "desktop content" in prompt
 
 
+def test_frame_table_source_column_marks_presented_monitors() -> None:
+    inv = [
+        {"file": "a.jpg", "wall": "14:35:12", "window_title": "Zoom", "fallback_fullscreen": False},
+        {"file": "b.jpg", "wall": "14:35:40", "window_title": None, "source": "monitor2", "presenting": True},
+    ]
+    table = prompts.render_frame_table(inv)
+
+    assert "| Source |" in table
+    assert "| window |" in table  # legacy entries default to window
+    assert "monitor2 (screen-share active)" in table
+
+    meta = {"title": "T", "context_note": "", "started_at": "2026-07-05T14:30:00"}
+    prompt = prompts.build_analysis_prompt(meta, "tx", inv, 60.0)
+    assert "content being presented" in prompt
+
+
 def test_commit_prompt_instructs_single_commit_and_id_reply() -> None:
     meta = {"title": "Weekly Sync", "started_at": "2026-07-05T14:30:00", "context_note": "billing"}
     p = prompts.build_commit_prompt(FULL_SUMMARY, meta)

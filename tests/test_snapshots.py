@@ -299,6 +299,131 @@ def test_stop_result_math(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# presenting: capture other monitors while a screen-share is active
+# ---------------------------------------------------------------------------
+
+
+def presenting_config(**overrides):
+    return make_config(
+        capture_monitors_when_presenting=True,
+        presenting_indicator_patterns=["is sharing your screen"],
+        **overrides,
+    )
+
+
+TWO_MONITORS = [Region(0, 0, 1920, 1080), Region(1920, 0, 1920, 1080)]
+
+
+def region_grabber(images_by_region):
+    """Grabber keyed by the region it is asked for."""
+
+    def grab(region):
+        return images_by_region[region]()
+
+    return grab
+
+
+def test_presenting_captures_other_monitor_and_skips_meeting_monitor(tmp_path):
+    # Meeting window on monitor 1; share active -> monitor 2 also captured.
+    win_region = Region(100, 100, 800, 600)
+    grabs = {
+        win_region: img_base,           # the meeting window
+        TWO_MONITORS[1]: img_distinct,  # the second screen (being presented)
+    }
+    cap = SnapshotCapturer(
+        tmp_path,
+        presenting_config(),
+        window_finder=always_match(),
+        grabber=region_grabber({**grabs, Region(0, 0, 256, 256): img_base}),
+        presence_checker=lambda pats: True,
+        monitor_lister=lambda: TWO_MONITORS,
+    )
+    # always_match() reports the window at (0,0,256,256) -> center on monitor 1.
+    cap._tick()
+
+    assert cap.frames_saved == 2  # window + second monitor, not monitor 1
+    lines = (tmp_path / "index.jsonl").read_text(encoding="utf-8").splitlines()
+    entries = [json.loads(line) for line in lines]
+    sources = {e["source"] for e in entries}
+    assert sources == {"window", "monitor2"}
+    mon = next(e for e in entries if e["source"] == "monitor2")
+    assert mon["presenting"] is True
+    assert mon["window_title"] is None
+    win = next(e for e in entries if e["source"] == "window")
+    assert win["presenting"] is False
+
+
+def test_not_presenting_captures_window_only(tmp_path):
+    cap = SnapshotCapturer(
+        tmp_path,
+        presenting_config(),
+        window_finder=always_match(),
+        grabber=sequence_grabber([img_base()]),
+        presence_checker=lambda pats: False,
+        monitor_lister=lambda: TWO_MONITORS,
+    )
+    cap._tick()
+    assert cap.frames_saved == 1
+    entry = json.loads((tmp_path / "index.jsonl").read_text(encoding="utf-8"))
+    assert entry["source"] == "window"
+
+
+def test_presenting_flag_off_disables_monitor_capture(tmp_path):
+    cap = SnapshotCapturer(
+        tmp_path,
+        make_config(capture_monitors_when_presenting=False,
+                    presenting_indicator_patterns=["is sharing your screen"]),
+        window_finder=always_match(),
+        grabber=sequence_grabber([img_base()]),
+        presence_checker=lambda pats: True,
+        monitor_lister=lambda: TWO_MONITORS,
+    )
+    cap._tick()
+    assert cap.frames_saved == 1
+
+
+def test_monitor_dedup_is_per_source(tmp_path):
+    # Static second screen dedups across ticks even while the window changes.
+    win_imgs = iter([img_base(), img_distinct()])
+    cap = SnapshotCapturer(
+        tmp_path,
+        presenting_config(),
+        window_finder=always_match(),
+        grabber=lambda region: (
+            img_distinct2() if region == TWO_MONITORS[1] else next(win_imgs)
+        ),
+        presence_checker=lambda pats: True,
+        monitor_lister=lambda: TWO_MONITORS,
+    )
+    cap._tick()
+    cap._tick()
+
+    # tick 1: window + monitor2 saved; tick 2: new window frame saved,
+    # unchanged monitor2 deduped.
+    assert cap.frames_saved == 3
+    assert cap.frames_skipped_dup == 1
+
+
+def test_monitor_grab_error_counted_never_raises(tmp_path):
+    def grab(region):
+        if region == TWO_MONITORS[1]:
+            raise RuntimeError("monitor unplugged")
+        return img_base()
+
+    cap = SnapshotCapturer(
+        tmp_path,
+        presenting_config(),
+        window_finder=always_match(),
+        grabber=grab,
+        presence_checker=lambda pats: True,
+        monitor_lister=lambda: TWO_MONITORS,
+    )
+    cap._tick()  # must not raise
+    assert cap.frames_saved == 1  # the window frame still landed
+    assert cap.errors == 1
+
+
+# ---------------------------------------------------------------------------
 # window location
 # ---------------------------------------------------------------------------
 

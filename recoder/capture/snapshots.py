@@ -127,6 +127,54 @@ def find_meeting_window(patterns: list[str]) -> Optional[Region]:
     return match.region if match is not None else None
 
 
+def _any_window_title_matches(patterns: list[str]) -> bool:
+    """True if any window title contains any pattern (case-insensitive).
+
+    Used to detect an active screen-share: browsers show an
+    "<site> is sharing your screen" pill window; Zoom/Teams spawn share
+    toolbars. Enumeration failures degrade to False (no monitor capture).
+    """
+
+    import pygetwindow  # lazy: only needed on a real screen
+
+    lowered = [p.lower() for p in patterns if p]
+    if not lowered:
+        return False
+    try:
+        windows = pygetwindow.getAllWindows()
+    except Exception:  # pragma: no cover - platform dependent
+        logger.exception("enumerating windows failed")
+        return False
+    for win in windows:
+        title = (getattr(win, "title", "") or "").lower()
+        if title and any(pat in title for pat in lowered):
+            return True
+    return False
+
+
+def _physical_monitors() -> list[Region]:
+    """Each physical monitor as a Region (mss monitors[1:])."""
+
+    import mss  # lazy: only needed on a real screen
+
+    with mss.mss() as sct:
+        return [
+            Region(m["left"], m["top"], m["width"], m["height"])
+            for m in sct.monitors[1:]
+        ]
+
+
+def _center_in(inner: Region, outer: Region) -> bool:
+    """True if ``inner``'s center point lies inside ``outer``."""
+
+    cx = inner.left + inner.width // 2
+    cy = inner.top + inner.height // 2
+    return (
+        outer.left <= cx < outer.left + outer.width
+        and outer.top <= cy < outer.top + outer.height
+    )
+
+
 # ---------------------------------------------------------------------------
 # Default frame grabber
 # ---------------------------------------------------------------------------
@@ -166,6 +214,8 @@ class SnapshotResult:
 
 WindowFinder = Callable[[list[str]], Optional[WindowMatch]]
 Grabber = Callable[[Optional[Region]], Image.Image]
+PresenceChecker = Callable[[list[str]], bool]
+MonitorLister = Callable[[], list[Region]]
 
 
 class SnapshotCapturer:
@@ -191,6 +241,8 @@ class SnapshotCapturer:
         *,
         window_finder: Optional[WindowFinder] = None,
         grabber: Optional[Grabber] = None,
+        presence_checker: Optional[PresenceChecker] = None,
+        monitor_lister: Optional[MonitorLister] = None,
     ) -> None:
         self._frames_dir = Path(frames_dir)
         self._frames_dir.mkdir(parents=True, exist_ok=True)
@@ -201,12 +253,26 @@ class SnapshotCapturer:
         self._jpeg_quality = config.jpeg_quality
         self._max_width = config.max_frame_width
         self._patterns = list(config.window_title_patterns)
+        # Presenting capture: off unless the config carries the fields (the
+        # production Config does; ad-hoc test configs may not).
+        self._capture_monitors = bool(
+            getattr(config, "capture_monitors_when_presenting", False)
+        )
+        self._present_patterns = list(
+            getattr(config, "presenting_indicator_patterns", []) or []
+        )
 
         self._window_finder: WindowFinder = window_finder or _match_window
         self._grabber: Grabber = grabber or _default_grabber
+        self._presence_checker: PresenceChecker = (
+            presence_checker or _any_window_title_matches
+        )
+        self._monitor_lister: MonitorLister = monitor_lister or _physical_monitors
 
         # State (mutated only under _lock or from the single capture thread).
-        self._last_hash: Optional[imagehash.ImageHash] = None
+        # Dedup is per source ("window", "monitor1", ...) so a static second
+        # screen dedups independently of a changing meeting window.
+        self._last_hashes: dict[str, imagehash.ImageHash] = {}
         self._seq = 0
         self.frames_saved = 0
         self.frames_skipped_dup = 0
@@ -273,23 +339,61 @@ class SnapshotCapturer:
                 title = None
                 fallback = True
 
-            image = self._grabber(region)
-            image = self._downscale(image)
+            image = self._downscale(self._grabber(region))
+            self._maybe_save(
+                image, source="window", title=title,
+                fallback=fallback, presenting=False,
+            )
 
-            frame_hash = imagehash.phash(image)
-            if (
-                self._last_hash is not None
-                and (frame_hash - self._last_hash) <= self._threshold
+            if self._capture_monitors and self._presence_checker(
+                self._present_patterns
             ):
-                self.frames_skipped_dup += 1
-                return
-
-            self._save(image, title, fallback)
-            self._last_hash = frame_hash
-            self.frames_saved += 1
+                self._capture_other_monitors(match)
         except Exception:
             self.errors += 1
             logger.exception("snapshot tick failed; recording continues")
+
+    def _capture_other_monitors(self, match: Optional[WindowMatch]) -> None:
+        """Snapshot every monitor NOT holding the meeting window.
+
+        Runs only while a screen-share is detected: during a presentation the
+        content being shown lives on those other screens, not in the meeting
+        window (which typically shows participant tiles to the presenter).
+        Per-monitor failures are counted and never propagate.
+        """
+        for i, mon in enumerate(self._monitor_lister(), start=1):
+            if match is not None and _center_in(match.region, mon):
+                continue  # the meeting window's own monitor is already covered
+            try:
+                image = self._downscale(self._grabber(mon))
+                self._maybe_save(
+                    image, source=f"monitor{i}", title=None,
+                    fallback=False, presenting=True,
+                )
+            except Exception:
+                self.errors += 1
+                logger.exception(
+                    "monitor snapshot failed; recording continues"
+                )
+
+    def _maybe_save(
+        self,
+        image: Image.Image,
+        *,
+        source: str,
+        title: Optional[str],
+        fallback: bool,
+        presenting: bool,
+    ) -> None:
+        """Save unless perceptually duplicate of this source's last frame."""
+        frame_hash = imagehash.phash(image)
+        last = self._last_hashes.get(source)
+        if last is not None and (frame_hash - last) <= self._threshold:
+            self.frames_skipped_dup += 1
+            return
+        self._save(image, title, fallback, source=source, presenting=presenting)
+        self._last_hashes[source] = frame_hash
+        self.frames_saved += 1
 
     def _downscale(self, image: Image.Image) -> Image.Image:
         """Downscale to width <= max_frame_width, preserving aspect ratio."""
@@ -300,7 +404,15 @@ class SnapshotCapturer:
         new_height = max(1, round(image.height * ratio))
         return image.resize((self._max_width, new_height), Image.LANCZOS)
 
-    def _save(self, image: Image.Image, title: Optional[str], fallback: bool) -> None:
+    def _save(
+        self,
+        image: Image.Image,
+        title: Optional[str],
+        fallback: bool,
+        *,
+        source: str = "window",
+        presenting: bool = False,
+    ) -> None:
         wall = time.time()
         stamp = time.strftime("%H%M%S", time.localtime(wall))
         filename = f"{self._seq:06d}_{stamp}.jpg"
@@ -318,6 +430,8 @@ class SnapshotCapturer:
                 "wall": wall,
                 "window_title": title,
                 "fallback_fullscreen": fallback,
+                "source": source,
+                "presenting": presenting,
             }
             with self._index_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")

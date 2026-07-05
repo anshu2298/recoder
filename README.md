@@ -125,11 +125,16 @@ uv run recoder doctor                        # verify — 0 failures expected
 its exit code is the number of failures. `recoder doctor --full` additionally
 runs a live unattended Claude SDK + CCR probe.
 
-### Desktop shortcut (optional)
+### Shortcuts & taskbar pinning
 
-Point a shortcut at `<repo>\.venv\Scripts\pythonw.exe -m recoder app` with the
-repo as the working directory — a native window, no console, no server to
-start by hand.
+`scripts\setup.ps1` installs Start Menu + Desktop shortcuts (or run
+`scripts\install_shortcuts.ps1` alone). They launch through `pythonw.exe`, so
+no console window ever appears. To pin: open Start, search **Recoder**,
+right-click → **Pin to taskbar**.
+
+Do NOT pin or launch `.venv\Scripts\recoder.exe` — that's the terminal CLI
+(`recoder doctor`, `recoder consolidate`, …), and pinning it gives you a
+console window instead of the app.
 
 ---
 

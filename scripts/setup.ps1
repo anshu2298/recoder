@@ -31,7 +31,7 @@ if ([version]$pyVersion -lt [version]"3.11") {
     Write-Host "MISSING: Python 3.11+ required, found $pyVersion." -ForegroundColor Red
     exit 1
 }
-Write-Host "python $pyVersion, uv, claude — all found."
+Write-Host "python $pyVersion, uv, claude - all found."
 
 # --- 2. Project dependencies ------------------------------------------------------
 Step "Installing Recoder dependencies (uv sync)"
@@ -45,7 +45,7 @@ $CcrHome = Join-Path $env:USERPROFILE ".ccr"
 $CcrPython = Join-Path $CcrHome ".venv\Scripts\python.exe"
 
 if (Test-Path $CcrPython) {
-    Step "CCR already installed at $CcrHome — skipping"
+    Step "CCR already installed at $CcrHome - skipping"
 } else {
     Step "Installing CCR memory engine into $CcrHome\.venv"
     New-Item -ItemType Directory -Force $CcrHome | Out-Null
@@ -58,17 +58,17 @@ if (Test-Path $CcrPython) {
     }
 }
 
-# Verify the MCP server module is importable — this is exactly how Recoder spawns it.
+# Verify the MCP server module is importable - this is exactly how Recoder spawns it.
 & $CcrPython -c "import ccr.mcp_server" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "CCR venv exists but 'ccr.mcp_server' is not importable — reinstall with:" -ForegroundColor Red
+    Write-Host "CCR venv exists but 'ccr.mcp_server' is not importable - reinstall with:" -ForegroundColor Red
     Write-Host "  $CcrPython -m pip install --force-reinstall ccr-memory"
     exit 1
 }
 Write-Host "CCR MCP server OK: $CcrPython"
 
 # Optional: wire CCR into your own interactive Claude Code sessions too
-# (Recoder does NOT need this — it spawns the MCP server itself — but it means
+# (Recoder does NOT need this - it spawns the MCP server itself - but it means
 # your regular coding sessions build the project memory that meetings draw on).
 Step "Enabling CCR for interactive Claude Code sessions (ccr install-global)"
 & $CcrPython -m pip show ccr-memory | Out-Null
@@ -81,14 +81,18 @@ try {
 
 # --- 4. Personal config -------------------------------------------------------------
 if (Test-Path (Join-Path $RepoRoot "recoder.toml")) {
-    Step "recoder.toml already exists — leaving it alone"
+    Step "recoder.toml already exists - leaving it alone"
 } else {
     Step "Creating recoder.toml from recoder.toml.example"
     Copy-Item (Join-Path $RepoRoot "recoder.toml.example") (Join-Path $RepoRoot "recoder.toml")
     Write-Host "EDIT recoder.toml and paste your Gladia API key (free at https://app.gladia.io)." -ForegroundColor Yellow
 }
 
-# --- 5. Health check ------------------------------------------------------------------
+# --- 5. Shortcuts (Start Menu + Desktop, console-less launcher) -----------------------
+Step "Installing shortcuts"
+& powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install_shortcuts.ps1")
+
+# --- 6. Health check ------------------------------------------------------------------
 Step "Running recoder doctor"
 uv run recoder doctor
 

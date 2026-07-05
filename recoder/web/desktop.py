@@ -8,12 +8,40 @@ until the user presses Stop.
 
 from __future__ import annotations
 
+import os
 import socket
 import threading
 import time
 
 from recoder.config import Config
 from recoder.web.recording import RecordingManager
+
+
+def _suppress_child_consoles() -> None:
+    """Stop console child processes from opening terminal windows.
+
+    The desktop app runs under pythonw (no console). When the pipeline later
+    spawns console programs — the Claude CLI during analysis, CCR MCP servers —
+    Windows would give each one a visible console window. OR-ing
+    CREATE_NO_WINDOW into every Popen from this process (asyncio subprocesses
+    included — they route through subprocess.Popen on Windows) keeps them
+    headless. Desktop mode only; the terminal CLI keeps normal behavior.
+    """
+    if os.name != "nt":
+        return
+    import subprocess
+
+    flag = subprocess.CREATE_NO_WINDOW
+    original = subprocess.Popen.__init__
+
+    def patched(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | flag
+        return original(self, *args, **kwargs)
+
+    if getattr(subprocess.Popen.__init__, "_recoder_no_window", False):
+        return  # already patched
+    patched._recoder_no_window = True  # type: ignore[attr-defined]
+    subprocess.Popen.__init__ = patched  # type: ignore[method-assign]
 
 
 def _wait_for_port(host: str, port: int, timeout: float = 15.0) -> bool:
@@ -35,6 +63,8 @@ def allow_close(manager: RecordingManager) -> bool:
 def run_desktop(config: Config) -> int:
     import uvicorn
     import webview
+
+    _suppress_child_consoles()
 
     from recoder.web.app import create_app
 

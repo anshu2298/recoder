@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recoder</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --line: #2a2f3a;
+    --text: #e6e9ef;
+    --muted: #8b93a3;
+    --accent: #5b8def;
+    --rec: #e5484d;
+    --ok: #30a46c;
+    --warn: #e2a336;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: center; gap: 4px;
+    padding: 14px 22px; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header .brand { font-weight: 600; letter-spacing: .3px; margin-right: 18px; }
+  nav button {
+    background: none; border: none; color: var(--muted);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font: inherit;
+  }
+  nav button.active { color: var(--text); background: var(--panel-2); }
+  nav button:hover { color: var(--text); }
+  main { max-width: 860px; margin: 0 auto; padding: 28px 22px 60px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Record view */
+  .record-wrap { display: flex; flex-direction: column; align-items: center; gap: 26px; padding-top: 24px; }
+  .fields { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 12px; }
+  .fields input {
+    width: 100%; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit;
+  }
+  .fields input:focus { outline: none; border-color: var(--accent); }
+  .fields input:disabled { opacity: .55; }
+  .rec-btn {
+    width: 176px; height: 176px; border-radius: 50%;
+    border: 2px solid var(--line); background: var(--panel);
+    color: var(--text); font-size: 19px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .08s ease, border-color .2s, background .2s;
+  }
+  .rec-btn:hover { border-color: var(--accent); }
+  .rec-btn:active { transform: scale(.97); }
+  .rec-btn.live { background: #2a1416; border-color: var(--rec); color: #ffd7d8; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(229,72,77,.35); } 50% { box-shadow: 0 0 0 14px rgba(229,72,77,0); } }
+  .live-stats { display: flex; gap: 30px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .live-stats .big { font-size: 30px; color: var(--text); }
+  .levels { width: 240px; display: flex; flex-direction: column; gap: 8px; }
+  .level-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+  .level-row .bar { flex: 1; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .level-row .bar > span { display: block; height: 100%; width: 0%; background: var(--ok); transition: width .2s; }
+
+  /* chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    padding: 4px 11px; border-radius: 999px; font-size: 12px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+  }
+  .chip.done { background: #10241b; color: #7ee2b8; border-color: #1d4633; }
+  .chip.current { background: #16233f; color: #a9c6ff; border-color: #274063; }
+  .chip.err { background: #2a1416; color: #ffb3b5; border-color: #5a2225; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card h3 { margin: 0 0 4px; font-size: 15px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .banner { background: #2a1416; border: 1px solid #5a2225; color: #ffcccd; padding: 10px 12px; border-radius: 8px; margin: 10px 0; font-size: 13px; }
+  button.action {
+    background: var(--accent); border: none; color: #fff; padding: 8px 16px;
+    border-radius: 8px; cursor: pointer; font: inherit;
+  }
+  button.action.ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+  button.action:hover { filter: brightness(1.08); }
+
+  /* archive */
+  .archive-layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; }
+  .mtg-list { display: flex; flex-direction: column; gap: 6px; }
+  .mtg-item {
+    text-align: left; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; cursor: pointer; color: var(--text); font: inherit;
+  }
+  .mtg-item:hover { border-color: var(--accent); }
+  .mtg-item.active { border-color: var(--accent); background: var(--panel-2); }
+  .mtg-item .t { font-weight: 600; font-size: 14px; }
+  .mtg-item .d { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .detail h2 { margin: 0 0 2px; }
+  .detail .meta-line { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  pre.doc {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; white-space: pre-wrap; word-wrap: break-word; font: 13px/1.6 ui-monospace, "Cascadia Code", Menlo, monospace;
+  }
+  .frames-strip { display: flex; gap: 8px; overflow-x: auto; padding: 6px 0 12px; }
+  .frames-strip img { height: 88px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+  .toggle-row { display: flex; gap: 10px; align-items: center; margin: 16px 0 8px; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  @media (max-width: 720px) { .archive-layout { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Recoder</span>
+  <nav>
+    <button data-view="record" class="active">Record</button>
+    <button data-view="processing">Processing</button>
+    <button data-view="archive">Archive</button>
+  </nav>
+</header>
+
+<main>
+  <!-- RECORD -->
+  <section id="view-record" class="view active">
+    <div class="record-wrap">
+      <div class="fields">
+        <input id="f-title" placeholder="Meeting title" autocomplete="off" />
+        <input id="f-context" placeholder="Context note (optional) — e.g. weekly sync with Rahul about billing" autocomplete="off" />
+      </div>
+      <button id="rec-btn" class="rec-btn">Start</button>
+      <div class="live-stats">
+        <div><div class="big" id="elapsed">00:00</div><div>elapsed</div></div>
+        <div><div class="big" id="frames">0</div><div>frames</div></div>
+      </div>
+      <div class="levels">
+        <div class="level-row">mic <div class="bar"><span id="lvl-mic"></span></div></div>
+        <div class="level-row">sys <div class="bar"><span id="lvl-system"></span></div></div>
+      </div>
+      <div id="rec-error" class="banner" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- PROCESSING -->
+  <section id="view-processing" class="view">
+    <div id="processing-list"></div>
+    <div id="processing-empty" class="empty">Nothing processing right now.</div>
+  </section>
+
+  <!-- ARCHIVE -->
+  <section id="view-archive" class="view">
+    <div class="archive-layout">
+      <div class="mtg-list" id="mtg-list"></div>
+      <div class="detail" id="detail"><div class="empty">Select a meeting.</div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const STAGES = ["recorded", "transcribed", "diarized", "analyzed", "committed"];
+const $ = (id) => document.getElementById(id);
+let current = "record";
+let recording = false;
+
+// --- navigation ---
+document.querySelectorAll("nav button").forEach((b) => {
+  b.onclick = () => switchView(b.dataset.view);
+});
+function switchView(v) {
+  current = v;
+  document.querySelectorAll("nav button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.view === v));
+  document.querySelectorAll(".view").forEach((s) =>
+    s.classList.toggle("active", s.id === "view-" + v));
+  if (v === "archive") loadMeetings();
+  if (v === "processing") renderProcessing(lastStatus);
+}
+
+// --- fetch helpers ---
+async function jget(url) { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+async function jpost(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((data && data.detail) || r.statusText);
+  return data;
+}
+
+// --- record ---
+$("rec-btn").onclick = async () => {
+  $("rec-error").style.display = "none";
+  try {
+    if (!recording) {
+      await jpost("/api/record/start", { title: $("f-title").value, context_note: $("f-context").value });
+    } else {
+      await jpost("/api/record/stop", {});
+    }
+    await poll();
+  } catch (e) {
+    $("rec-error").textContent = String(e.message || e);
+    $("rec-error").style.display = "block";
+  }
+};
+
+function fmtElapsed(s) {
+  s = Math.floor(s || 0);
+  const m = Math.floor(s / 60), sec = s % 60;
+  const h = Math.floor(m / 60);
+  const mm = String(m % 60).padStart(2, "0"), ss = String(sec).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function renderRecord(st) {
+  recording = st.recording;
+  const btn = $("rec-btn");
+  btn.textContent = recording ? "Stop" : "Start";
+  btn.classList.toggle("live", recording);
+  $("f-title").disabled = recording;
+  $("f-context").disabled = recording;
+  if (recording && st.title && !$("f-title").value) $("f-title").value = st.title;
+  $("elapsed").textContent = fmtElapsed(st.elapsed_s);
+  $("frames").textContent = st.frames_saved || 0;
+  const scale = (v) => Math.min(100, Math.round((v || 0) * 400)) + "%";
+  $("lvl-mic").style.width = recording ? scale(st.levels.mic) : "0%";
+  $("lvl-system").style.width = recording ? scale(st.levels.system) : "0%";
+  if (st.last_error) { $("rec-error").textContent = st.last_error; $("rec-error").style.display = "block"; }
+}
+
+// --- processing ---
+function renderProcessing(st) {
+  const list = $("processing-list");
+  const items = (st && st.processing) || [];
+  $("processing-empty").style.display = items.length ? "none" : "block";
+  list.innerHTML = items.map((m) => {
+    const errored = m.state === "error";
+    const curIdx = STAGES.indexOf(m.state);
+    const chips = STAGES.map((s, i) => {
+      let cls = "chip";
+      if (errored) { cls += i <= (m.error && STAGES.indexOf(m.error.at_state) || 0) ? "" : ""; }
+      if (!errored && i < curIdx) cls += " done";
+      if (!errored && i === curIdx) cls += " current";
+      return `<span class="${cls}">${s}</span>`;
+    }).join("");
+    const banner = errored
+      ? `<div class="banner">Error${m.error && m.error.stage ? " in " + m.error.stage : ""}: ${m.error && m.error.message ? escapeHtml(m.error.message) : "unknown"}</div>
+         <button class="action" onclick="resume('${m.folder}')">Resume</button>`
+      : "";
+    return `<div class="card"><h3>${escapeHtml(m.title || m.folder)}</h3>
+      <div class="sub">${m.folder}</div>
+      <div class="chips">${chips}</div>${banner}</div>`;
+  }).join("");
+}
+async function resume(folder) {
+  try { await jpost(`/api/meetings/${encodeURIComponent(folder)}/resume`, {}); await poll(); }
+  catch (e) { alert("Resume failed: " + (e.message || e)); }
+}
+
+// --- archive ---
+let selected = null;
+async function loadMeetings() {
+  const rows = await jget("/api/meetings");
+  const list = $("mtg-list");
+  if (!rows.length) { list.innerHTML = `<div class="empty">No meetings yet.</div>`; return; }
+  list.innerHTML = rows.map((m) => `
+    <button class="mtg-item ${m.folder === selected ? "active" : ""}" onclick="openMeeting('${m.folder}')">
+      <div class="t">${escapeHtml(m.title || m.folder)}</div>
+      <div class="d">${(m.date || "").replace("T", " ").slice(0, 16)} · ${m.state}${m.has_summary ? " · summary" : ""}</div>
+    </button>`).join("");
+}
+async function openMeeting(folder) {
+  selected = folder;
+  document.querySelectorAll(".mtg-item").forEach((b) =>
+    b.classList.toggle("active", b.querySelector(".t") && false));
+  loadMeetings();
+  const d = await jget(`/api/meetings/${encodeURIComponent(folder)}`);
+  const meta = d.meta || {};
+  const framesHtml = (d.frames || []).map((f) =>
+    `<img loading="lazy" src="/api/meetings/${encodeURIComponent(folder)}/frames/${encodeURIComponent(f)}" onclick="window.open(this.src)" />`).join("");
+  $("detail").innerHTML = `
+    <h2>${escapeHtml(meta.title || folder)}</h2>
+    <div class="meta-line">${folder} · ${meta.state || ""}${meta.context_note ? " · " + escapeHtml(meta.context_note) : ""}</div>
+    <div class="toggle-row">
+      <button class="action ghost" onclick="reprocess('${folder}')">Reprocess</button>
+      ${d.transcript ? `<button class="action ghost" onclick="toggleTranscript()">Toggle transcript</button>` : ""}
+    </div>
+    ${framesHtml ? `<div class="frames-strip">${framesHtml}</div>` : ""}
+    <h3>Summary</h3>
+    <pre class="doc">${d.summary ? escapeHtml(d.summary) : "No summary yet."}</pre>
+    <div id="transcript-box" style="display:none">
+      <h3>Transcript</h3>
+      <pre class="doc">${d.transcript ? escapeHtml(d.transcript) : ""}</pre>
+    </div>`;
+}
+function toggleTranscript() {
+  const b = $("transcript-box");
+  if (b) b.style.display = b.style.display === "none" ? "block" : "none";
+}
+async function reprocess(folder) {
+  const note = prompt("Corrected context note (leave blank to keep):", "");
+  try {
+    await jpost(`/api/meetings/${encodeURIComponent(folder)}/reprocess`,
+      note ? { context_note: note } : {});
+    alert("Reprocessing started.");
+    switchView("processing");
+    await poll();
+  } catch (e) { alert("Reprocess failed: " + (e.message || e)); }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// --- polling (only while visible) ---
+let lastStatus = { processing: [], levels: {} };
+async function poll() {
+  try {
+    const st = await jget("/api/status");
+    lastStatus = st;
+    renderRecord(st);
+    if (current === "processing") renderProcessing(st);
+  } catch (e) { /* transient; next tick retries */ }
+}
+let timer = null;
+function startPolling() { if (!timer) { poll(); timer = setInterval(poll, 2000); } }
+function stopPolling() { if (timer) { clearInterval(timer); timer = null; } }
+document.addEventListener("visibilitychange", () =>
+  document.hidden ? stopPolling() : startPolling());
+startPolling();
+</script>
+</body>
+</html>

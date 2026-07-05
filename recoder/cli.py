@@ -108,9 +108,86 @@ def replay(folder: str = typer.Argument(...)) -> None:
 
 
 @app.command()
-def ui() -> None:
-    """Launch the web UI."""
-    raise NotImplementedError("Phase 4")
+def ui(
+    no_window: bool = typer.Option(
+        False, "--no-window", help="Serve only; do not open a browser window."
+    ),
+) -> None:
+    """Launch the web UI (server + a chromeless app window)."""
+    import os
+    import socket
+    import subprocess
+    import threading
+    import time
+    import webbrowser
+
+    import uvicorn
+
+    from recoder.config import load_config
+    from recoder.web.app import create_app
+
+    config = load_config()
+    host = "127.0.0.1"
+    port = config.port
+    url = f"http://{host}:{port}"
+
+    def _wait_for_server(timeout: float = 15.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.5)
+                if sock.connect_ex((host, port)) == 0:
+                    return True
+            time.sleep(0.2)
+        return False
+
+    def _chrome_candidates() -> list[str]:
+        local = os.environ.get("LOCALAPPDATA", "")
+        prog = os.environ.get("ProgramFiles", r"C:\Program Files")
+        prog86 = os.environ.get(
+            "ProgramFiles(x86)", r"C:\Program Files (x86)"
+        )
+        paths = [
+            os.path.join(prog, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(prog86, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(
+                local, "Google", "Chrome", "Application", "chrome.exe"
+            ),
+            os.path.join(prog, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(
+                prog86, "Microsoft", "Edge", "Application", "msedge.exe"
+            ),
+        ]
+        return [p for p in paths if p and os.path.exists(p)]
+
+    def _launch_window() -> None:
+        if no_window:
+            return
+        if not _wait_for_server():
+            typer.echo("Server did not come up in time; open " + url, err=True)
+            return
+        local = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+        profile = os.path.join(local, "recoder", "chrome-profile")
+        for exe in _chrome_candidates():
+            try:
+                subprocess.Popen(
+                    [
+                        exe,
+                        f"--app={url}",
+                        f"--user-data-dir={profile}",
+                    ],
+                    close_fds=True,
+                )
+                return
+            except OSError:
+                continue
+        # Final fallback: whatever the OS considers the default browser.
+        webbrowser.open(url)
+
+    threading.Thread(target=_launch_window, daemon=True).start()
+
+    typer.echo(f"Recoder UI on {url}  (Ctrl+C to stop)")
+    uvicorn.run(create_app(config), host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

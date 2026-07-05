@@ -51,7 +51,7 @@ recoder/
   - `audio-mic.flac` — default microphone (the user).
   - Library: `pyaudiowpatch` (WASAPI loopback) + `soundfile` (streaming FLAC write). Audio is flushed to disk continuously; a crash loses at most the last buffer (< 1s).
   - Each chunk written is timestamped (wall-clock) in a sidecar index so the two streams can be aligned later without assuming equal sample clocks (mic/loopback clock drift on long calls).
-- **Screen snapshots:** every 20s, capture the meeting window (located via `pygetwindow` title match: Zoom/Meet/Teams patterns; fallback: primary monitor full-screen grab).
+- **Screen snapshots:** every 20s, capture the screen region occupied by the meeting window (located via `pygetwindow` title match: Zoom/Meet/Teams patterns; fallback: primary monitor full-screen grab). **Known limitation (accepted):** this is a coordinate-region grab — if the meeting window is covered or minimized, the frame captures whatever is on top instead. Dedup discards repeats and the analysis prompt tells Claude some frames may be unrelated desktop content; true background-window capture (PrintWindow/DWM) is deliberately out of scope for v1.
   - Dedup with perceptual hash (`imagehash.phash`, Hamming distance ≤ 4 → skip). A static screen share costs ~nothing; a demo or slide deck yields one frame per distinct view.
   - Saved as JPEG (quality 80, max 1568px wide — Claude vision's effective ceiling) into `frames/` with timestamps.
 - **Meeting metadata:** at record start, the UI offers two optional fields: title (pre-filled from the meeting window title) and a one-line context note ("weekly sync with Rahul about billing"). Saved to `meta.json`.
@@ -61,14 +61,17 @@ recoder/
 
 A resumable state machine; state persisted in `meta.json` (`recorded → transcribed → diarized → analyzed → committed → done`). Each stage is idempotent: rerunning the pipeline skips completed stages, so a crash never redoes finished work.
 
-1. **Transcribe + diarize:** whisperX with `large-v3` (int8, CUDA) over the merged/aligned audio; pyannote diarization (one-time free HuggingFace token, documented in setup). The mic channel deterministically labels the user's own speech ("Me"); diarization separates the remaining speakers (SPEAKER_1, SPEAKER_2…). Output: `transcript.json` (segments with speaker, start, end, text) + `transcript.md` (readable).
-   - VRAM plan: whisper large-v3 int8 (~3GB) and pyannote (~1GB) run **sequentially**, never co-resident.
+1. **Transcribe + diarize:** the two channels are transcribed **separately** (never mixed — mixing would destroy the channel information that makes "Me" labeling deterministic):
+   - `audio-mic.flac` → whisperX `large-v3` → every segment labeled "Me".
+   - `audio-system.flac` → whisperX `large-v3`, then pyannote diarization (one-time free HuggingFace token, documented in setup) → SPEAKER_1, SPEAKER_2…
+   - The two segment lists are merged into one timeline using the wall-clock timing index from capture. Output: `transcript.json` (segments with speaker, start, end, text) + `transcript.md` (readable).
+   - **VRAM plan (hard requirement, 4GB card):** `compute_type="int8"`, `batch_size=4`. Models run strictly sequentially and are explicitly unloaded between phases: whisper transcribe → free → alignment model → free → pyannote. Default whisperX settings (batch 16, co-resident alignment model) will CUDA-OOM on this card.
+   - **Hinglish handling (accepted trade-off):** whisperX word-level alignment uses a single-language wav2vec2 model and degrades on code-switched speech. Word-level alignment runs only for segments whisper marks as English; Hindi/mixed segments keep segment-level timestamps, and speaker assignment for those uses segment-midpoint overlap with diarization turns. Slightly coarser speaker boundaries on Hindi speech is acceptable; transcription itself (large-v3) handles code-switching at segment level.
    - **Pluggable STT interface:** `Transcriber` protocol with the local whisperX implementation as default; a hosted implementation (e.g. Groq Whisper) can be added later behind a config flag if local speed ever disappoints. Privacy trade-off documented at that point, not now.
-2. **Analyze (Claude):** one Claude Agent SDK session receives:
-   - the diarized transcript,
-   - the deduped frames (multimodal — capped at ~20 most-distinct frames; if more, evenly sampled),
-   - meeting metadata (title, context note, duration, date),
-   - access to CCR MCP tools (`gcc_search`, `gcc_context`) so it pulls relevant project memory itself rather than us pre-guessing.
+2. **Analyze (Claude):** one Claude Agent SDK session, configured for unattended operation:
+   - **Inputs:** the diarized transcript and meeting metadata (title, context note, duration, date) go in the prompt. **Frames are delivered via the filesystem**: the session's working directory is the meeting folder and the prompt lists the `frames/` inventory with timestamps; Claude reads the images it deems relevant with the Read tool (multi-turn, so no per-request image cap applies — no sampling/cap logic needed on our side).
+   - **CCR access:** the CCR MCP server is wired explicitly into the SDK `mcp_servers` config (the interactive Claude Code hook that auto-loads CCR does NOT apply to programmatic SDK sessions). Tool names confirmed against the installed CCR: `gcc_search`, `gcc_context`, `gcc_commit`.
+   - **Permissions:** `permission_mode="bypassPermissions"` with an `allowed_tools` allowlist (Read, Glob, the three CCR tools). Without this the unattended pipeline hangs on tool-approval prompts — this is the most likely silent failure mode and gets an explicit `doctor` check.
    It produces `summary.md` with fixed sections: TL;DR, discussion by topic (with references to what was on screen), decisions, action items (owner → task → due if stated), open questions, project mapping (which CCR projects this touches), and a speaker-name guess table (SPEAKER_1 = "probably Rahul — addressed by name at 14:32") for the user to confirm.
 3. **Commit back:** `gcc_commit` into the recoder project's CCR memory with the meeting summary, so cross-meeting continuity accrues automatically. The raw transcript stays on disk; only the distilled summary enters memory.
 

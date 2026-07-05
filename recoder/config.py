@@ -8,12 +8,20 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OVERRIDE_FILE = _REPO_ROOT / "recoder.toml"
 
-_CCR_PYTHON = r"C:\Users\anshu\.ccr\.venv\Scripts\python.exe"
+# CCR (github.com/qbit-glitch/ccr) lives in a dedicated venv under the user's
+# home dir; scripts/setup.ps1 creates it there. Everything below is derived
+# from the machine, never hardcoded, so a fresh clone works for any teammate.
+_CCR_HOME = Path.home() / ".ccr"
+_CCR_PYTHON = str(
+    _CCR_HOME
+    / ".venv"
+    / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+)
 
 
 @dataclass(frozen=True)
 class Config:
-    meetings_dir: Path = Path(r"G:\recoder\meetings")
+    meetings_dir: Path = _REPO_ROOT / "meetings"
     port: int = 8377
 
     whisper_model: str = "large-v3"
@@ -37,12 +45,12 @@ class Config:
 
     ccr_mcp_command: str = _CCR_PYTHON
     ccr_mcp_args: list[str] = field(
-        default_factory=lambda: ["-m", "ccr.mcp_server", "--project", r"G:\recoder"]
+        default_factory=lambda: ["-m", "ccr.mcp_server", "--project", str(_REPO_ROOT)]
     )
 
     # --- CCR project-memory routing (Piece A) --------------------------------
     # Global CCR registry that maps every project path to its store metadata.
-    ccr_registry_path: Path = Path(r"C:\Users\anshu\.ccr\projects.json")
+    ccr_registry_path: Path = _CCR_HOME / "projects.json"
     # A routed project counts as "recent" if used within this many days.
     routing_recency_days: int = 7
     # Never mount more than this many foreign stores into an analysis session.
@@ -51,10 +59,10 @@ class Config:
     # --- Worktree memory consolidation (Piece B) -----------------------------
     # Base dir under which a consolidated source store is archived (never
     # deleted): <consolidation_archive_dir>/<source-name>-<YYYYMMDD>.
-    consolidation_archive_dir: Path = Path(r"G:\recoder\archives\ccr")
+    consolidation_archive_dir: Path = _REPO_ROOT / "archives" / "ccr"
     # Per-source incremental watermark state (last consolidated source commit
     # id, timestamp, run count) keyed by normalized source path.
-    consolidation_state_path: Path = Path(r"G:\recoder\consolidation-state.json")
+    consolidation_state_path: Path = _REPO_ROOT / "consolidation-state.json"
     # Named source->target groups for `recoder consolidate-group <name>`. Shape:
     #   {"<group>": {"target": str, "sources": [str, ...]}}. Loaded verbatim from
     #   the [consolidation_groups.<name>] tables in recoder.toml.

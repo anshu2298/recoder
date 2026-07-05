@@ -155,7 +155,7 @@ def _check_ccr_python(cfg) -> str:
         FAIL,
         "CCR venv python",
         f"missing at {p}",
-        "Install CCR so its venv python exists at the configured path.",
+        "Run scripts/setup.ps1 (installs CCR into ~/.ccr/.venv), or set ccr_mcp_command in recoder.toml.",
     )
 
 

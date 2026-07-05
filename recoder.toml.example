@@ -1,0 +1,40 @@
+# Recoder configuration — copy this file to `recoder.toml` and fill it in.
+# `recoder.toml` is gitignored: it holds your personal API key and machine-
+# specific overrides, and must never be committed.
+#
+# Every field of recoder/config.py's Config dataclass can be overridden here.
+# Anything you leave out keeps its default, and the defaults are portable
+# (derived from this repo's location and your home directory), so on most
+# machines the ONLY required line is the Gladia key.
+
+# --- Required ----------------------------------------------------------------
+# Speech-to-text + speaker diarization. Free tier: 10 h/month.
+# Sign up at https://app.gladia.io and paste your key here
+# (or set the GLADIA_API_KEY environment variable instead).
+gladia_api_key = "YOUR-GLADIA-API-KEY"
+
+# --- Common optional overrides -------------------------------------------------
+# port = 8377                          # local web UI / app port
+# meetings_dir = "D:/meetings"         # where recordings + summaries are stored
+# snapshot_interval_s = 20             # seconds between screen snapshots
+# window_title_patterns = ["Zoom", "Meet", "Teams", "Google Meet", "Microsoft Teams"]
+
+# --- CCR memory (only if CCR is NOT at ~/.ccr/.venv) ---------------------------
+# ccr_mcp_command = "C:/path/to/.ccr/.venv/Scripts/python.exe"
+# ccr_registry_path = "C:/path/to/.ccr/projects.json"
+
+# --- Memory routing tuning -----------------------------------------------------
+# routing_recency_days = 7             # projects used within N days auto-mount
+# routing_max_mounts = 4               # max project stores mounted per meeting
+
+# --- Consolidation groups --------------------------------------------------------
+# Named groups for `recoder consolidate-group <name>`: distill each source
+# worktree's CCR memory into the target project's store (incremental — only
+# commits newer than the per-source watermark are processed).
+#
+# [consolidation_groups.myproject]
+# target = "C:/work/myproject"
+# sources = [
+#     "C:/work/myproject/feature-a",
+#     "C:/work/myproject-experiment/feature-b",
+# ]

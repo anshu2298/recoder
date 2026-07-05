@@ -22,13 +22,17 @@ import asyncio
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from recoder.config import load_config  # noqa: E402
+
+_cfg = load_config()
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 FIXTURE_IMG = FIXTURE_DIR / "test_image.jpg"
-CWD = r"G:\recoder"
+CWD = str(Path(__file__).resolve().parent.parent)
 TIMEOUT_S = 180
 
-CCR_COMMAND = r"C:\Users\anshu\.ccr\.venv\Scripts\python.exe"
-CCR_ARGS = ["-m", "ccr.mcp_server", "--project", r"G:\recoder"]
+CCR_COMMAND = _cfg.ccr_mcp_command
+CCR_ARGS = list(_cfg.ccr_mcp_args)
 
 PROMPT = (
     "Call gcc_search with query 'recoder design' and summarize the top result in "

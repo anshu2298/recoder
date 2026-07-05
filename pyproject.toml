@@ -17,6 +17,7 @@ dependencies = [
     "typer",
     "claude-agent-sdk",
     "psutil",
+    "httpx",
 ]
 
 [project.optional-dependencies]

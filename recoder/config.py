@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -39,6 +40,13 @@ class Config:
         default_factory=lambda: ["-m", "ccr.mcp_server", "--project", r"G:\recoder"]
     )
 
+    # --- Gladia hosted STT (default engine, spec §4.2 step 1) ----------------
+    # API key resolves from env GLADIA_API_KEY, with a recoder.toml override.
+    gladia_api_key: str | None = None
+    gladia_base_url: str = "https://api.gladia.io"
+    gladia_poll_interval_s: float = 3.0
+    gladia_timeout_s: int = 900
+
 
 _SCALAR_KEYS = {
     "meetings_dir",
@@ -53,11 +61,21 @@ _SCALAR_KEYS = {
     "window_title_patterns",
     "ccr_mcp_command",
     "ccr_mcp_args",
+    "gladia_api_key",
+    "gladia_base_url",
+    "gladia_poll_interval_s",
+    "gladia_timeout_s",
 }
 
 
 def load_config(override_file: Path | None = None) -> Config:
     cfg = Config()
+
+    # Environment sources (lowest precedence after dataclass defaults).
+    env_key = os.environ.get("GLADIA_API_KEY")
+    if env_key:
+        cfg = replace(cfg, gladia_api_key=env_key)
+
     path = override_file if override_file is not None else _OVERRIDE_FILE
     if not path.exists():
         return cfg

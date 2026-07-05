@@ -18,6 +18,7 @@ dependencies = [
     "claude-agent-sdk",
     "psutil",
     "httpx",
+    "pywebview>=6.2.1",
 ]
 
 [project.optional-dependencies]

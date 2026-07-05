@@ -107,6 +107,15 @@ def replay(folder: str = typer.Argument(...)) -> None:
     _run_pipeline(folder)
 
 
+@app.command(name="app")
+def desktop_app() -> None:
+    """Launch Recoder as a native desktop window (server runs in-process)."""
+    from recoder.config import load_config
+    from recoder.web.desktop import run_desktop
+
+    raise typer.Exit(code=run_desktop(load_config()))
+
+
 @app.command()
 def ui(
     no_window: bool = typer.Option(

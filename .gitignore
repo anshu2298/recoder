@@ -2,3 +2,10 @@
 __pycache__/
 .venv/
 *.log
+spikes/out/
+recoder.toml
+*.egg-info/
+.pytest_cache/
+
+# CCR context directory
+.ccr/

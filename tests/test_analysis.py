@@ -288,6 +288,77 @@ def test_commit_garbage_reply_raises(tmp_path: Path, cfg: Config) -> None:
         commit_to_ccr(folder, cfg, session_runner=runner, sleep=_no_sleep)
 
 
+# --- meeting write-back into routed project stores ----------------------------
+def _routed_config(tmp_path: Path) -> Config:
+    other = tmp_path / "billing-service"
+    (other / ".ccr").mkdir(parents=True)
+    registry = _write_registry(
+        tmp_path,
+        [
+            {
+                "path": str(other),
+                "name": "billing-service",
+                "last_used": "2026-07-04T10:00:00+00:00",
+                "commit_count": 12,
+            }
+        ],
+    )
+    return Config(meetings_dir=tmp_path / "meetings", ccr_registry_path=registry)
+
+
+def test_commit_prompt_with_mounts_instructs_writeback() -> None:
+    meta = {"title": "Weekly Sync", "started_at": "2026-07-05T14:30:00", "context_note": "billing"}
+    mounted = [{"slug": "billing_service", "name": "billing-service", "reason": "recent"}]
+    p = prompts.build_commit_prompt(FULL_SUMMARY, meta, mounted_projects=mounted)
+
+    assert "mcp__ccr__gcc_commit" in p
+    assert "mcp__ccr_billing_service__gcc_commit" in p
+    assert "Project write-back" in p
+    assert "<slug>: <commit id>" in p
+    assert "Skip any mounted project the meeting did not actually concern" in p
+
+
+def test_commit_mounts_routed_store_writable(tmp_path: Path) -> None:
+    folder = _make_meeting(tmp_path, with_summary=True)
+    config = _routed_config(tmp_path)
+    runner = CapturingRunner(["C12345\nbilling_service: C88"])
+
+    commit_to_ccr(folder, config, session_runner=runner, sleep=_no_sleep)
+
+    options = runner.options[0]
+    assert "ccr_billing_service" in options.mcp_servers
+    tools = set(options.allowed_tools)
+    assert "mcp__ccr_billing_service__gcc_commit" in tools
+
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    assert meta["ccr_commit"] == "C12345"
+    assert meta["ccr_writebacks"] == {"billing_service": "C88"}
+
+
+def test_commit_writeback_lines_do_not_steal_recoder_id(tmp_path: Path) -> None:
+    folder = _make_meeting(tmp_path, with_summary=True)
+    config = _routed_config(tmp_path)
+    # Model replied with the write-back line first, recoder id after.
+    runner = CapturingRunner(["billing_service: C88\nC12345"])
+
+    commit_to_ccr(folder, config, session_runner=runner, sleep=_no_sleep)
+
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    assert meta["ccr_commit"] == "C12345"
+    assert meta["ccr_writebacks"] == {"billing_service": "C88"}
+
+
+def test_commit_no_writeback_leaves_meta_clean(tmp_path: Path, cfg: Config) -> None:
+    folder = _make_meeting(tmp_path, with_summary=True)
+    runner = FakeRunner(["C12345"])
+
+    commit_to_ccr(folder, cfg, session_runner=runner, sleep=_no_sleep)
+
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    assert meta["ccr_commit"] == "C12345"
+    assert "ccr_writebacks" not in meta
+
+
 # --- project-memory routing into analysis (Piece A) ---------------------------
 def test_analyze_mounts_routed_project(tmp_path: Path) -> None:
     folder = _make_meeting(tmp_path)  # title mentions "Billing"

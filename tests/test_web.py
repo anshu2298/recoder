@@ -222,6 +222,25 @@ def test_meeting_detail_with_summary(client, store):
     assert d["meta"]["title"] == "Detail"
 
 
+def test_meeting_detail_action_items(client, store):
+    summary = (
+        "# Meeting Summary\n\n## Action Items\n"
+        "| Owner | Task | Due |\n| --- | --- | --- |\n"
+        "| Rahul | Fix invoice bug | Friday |\n\n## Speakers\nnone\n"
+    )
+    m = _seed_meeting(store, "AI", state=MeetingState.committed, summary=summary)
+    d = client.get(f"/api/meetings/{m.folder.name}").json()
+    assert d["action_items"] == [
+        {"owner": "Rahul", "task": "Fix invoice bug", "due": "Friday"}
+    ]
+
+
+def test_meeting_detail_action_items_empty_without_summary(client, store):
+    m = _seed_meeting(store, "NoSum", state=MeetingState.recorded)
+    d = client.get(f"/api/meetings/{m.folder.name}").json()
+    assert d["action_items"] == []
+
+
 def test_frame_serving(client, store):
     jpeg = b"\xff\xd8\xff\xe0fake"
     m = _seed_meeting(store, "Frames", state=MeetingState.committed,

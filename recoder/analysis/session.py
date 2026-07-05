@@ -189,8 +189,14 @@ def _build_options(
     max_turns: int,
     *,
     mounts: list[tuple[str, routing.RoutedProject]] | None = None,
+    mount_write: bool = False,
 ) -> object:
-    """Build ClaudeAgentOptions: the recoder store plus any routed read-only mounts."""
+    """Build ClaudeAgentOptions: the recoder store plus any routed mounts.
+
+    Mounts are read-only during analysis. ``mount_write=True`` (commit stage
+    only) additionally allows ``gcc_commit`` on each mounted store so the
+    meeting note can be written back into the projects it concerned.
+    """
     mcp_servers: dict[str, object] = {
         "ccr": {
             "type": "stdio",
@@ -207,9 +213,10 @@ def _build_options(
     ]
     for slug, rp in mounts or []:
         mcp_servers[f"ccr_{slug}"] = ccr_server_for_project(config, rp.path)
-        # READ-ONLY: search + context only, never gcc_commit on a foreign store.
         allowed_tools.append(f"mcp__ccr_{slug}__gcc_search")
         allowed_tools.append(f"mcp__ccr_{slug}__gcc_context")
+        if mount_write:
+            allowed_tools.append(f"mcp__ccr_{slug}__gcc_commit")
 
     return build_session_options(
         meeting_folder, config, max_turns, mcp_servers, allowed_tools
@@ -397,6 +404,25 @@ def analyze(
 
 
 _COMMIT_ID_RE = re.compile(r"C\d+")
+_WRITEBACK_LINE_RE = re.compile(r"^\s*([a-z0-9_]+)\s*:\s*(C\d+)\s*$")
+
+
+def _parse_commit_reply(reply: str, slugs: set[str]) -> tuple[str | None, dict[str, str]]:
+    """Split the commit reply into (recoder commit id, {slug: writeback id}).
+
+    Write-back lines are ``<slug>: C<nnn>`` for a known mounted slug; the
+    recoder id is the first bare ``C<nnn>`` found outside those lines.
+    """
+    writebacks: dict[str, str] = {}
+    other_lines: list[str] = []
+    for line in reply.splitlines():
+        m = _WRITEBACK_LINE_RE.match(line)
+        if m and m.group(1) in slugs:
+            writebacks[m.group(1)] = m.group(2)
+        else:
+            other_lines.append(line)
+    match = _COMMIT_ID_RE.search("\n".join(other_lines))
+    return (match.group(0) if match else None), writebacks
 
 
 def commit_to_ccr(
@@ -407,6 +433,11 @@ def commit_to_ccr(
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Commit the distilled summary to CCR memory; record the id in meta.json.
+
+    Also writes a short "Meeting:" note back into each routed project store the
+    meeting concerned (write-back), recording those ids in meta as
+    ``ccr_writebacks``. A live Claude Code session in one of those projects
+    picks the note up on the user's next prompt via CCR's context injection.
 
     Raises AnalysisError if ``summary.md`` is missing, the session fails, or the
     reply carries no plausible commit id.
@@ -426,14 +457,27 @@ def commit_to_ccr(
     except (OSError, json.JSONDecodeError):
         meta = {}
 
-    prompt = build_commit_prompt(summary_md, meta)
-    options = _build_options(meeting_folder, config, COMMIT_MAX_TURNS)
+    mounts = _route_mounts(meta, config)
+    mounted_projects = [
+        {"slug": slug, "name": rp.name, "reason": rp.reason} for slug, rp in mounts
+    ]
+
+    prompt = build_commit_prompt(summary_md, meta, mounted_projects=mounted_projects)
+    # Two extra turns per mounted store: its gcc_commit call + result.
+    options = _build_options(
+        meeting_folder,
+        config,
+        COMMIT_MAX_TURNS + 2 * len(mounts),
+        mounts=mounts,
+        mount_write=True,
+    )
 
     reply = _run_with_retries(runner, prompt, options, sleep).strip()
 
-    match = _COMMIT_ID_RE.search(reply)
-    if match:
-        commit_id: str = match.group(0)
+    slugs = {slug for slug, _ in mounts}
+    parsed_id, writebacks = _parse_commit_reply(reply, slugs)
+    if parsed_id:
+        commit_id: str = parsed_id
     elif "commit" in reply.lower() and reply:
         commit_id = reply
     else:
@@ -441,5 +485,8 @@ def commit_to_ccr(
             f"CCR commit reply carried no commit id: {reply!r}"
         )
 
+    updates: dict[str, object] = {"ccr_commit": commit_id}
+    if writebacks:
+        updates["ccr_writebacks"] = writebacks
     store = MeetingStore(config)
-    store.load(meeting_folder).update_meta(ccr_commit=commit_id)
+    store.load(meeting_folder).update_meta(**updates)

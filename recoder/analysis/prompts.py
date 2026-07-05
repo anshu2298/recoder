@@ -211,18 +211,24 @@ final document as your LAST message, with nothing after it.
 """
 
 
-def build_commit_prompt(summary_md: str, meta: dict) -> str:
+def build_commit_prompt(
+    summary_md: str, meta: dict, mounted_projects: list[dict] | None = None
+) -> str:
     """Build the prompt for the short CCR write-back session.
 
-    Instructs the session to call ``mcp__ccr__gcc_commit`` exactly once with a
-    condensed record of the meeting, then reply with only the commit id.
+    Always: one ``mcp__ccr__gcc_commit`` recording the meeting in the recoder
+    store. When ``mounted_projects`` routed foreign stores are mounted, also
+    instructs a per-project write-back: a short "Meeting:" note committed into
+    each project store the meeting actually concerned, so the user's next
+    prompt in a live Claude Code session inside that project picks it up via
+    CCR's context injection.
     """
     title = str(meta.get("title") or "Untitled meeting")
     started_at = str(meta.get("started_at") or "")
     date = started_at[:10] if started_at else "unknown date"
     context_note = str(meta.get("context_note") or "").strip() or "meeting record"
 
-    return f"""You are recording a meeting summary into CCR project memory.
+    base = f"""You are recording a meeting summary into CCR project memory.
 
 Below is the finished meeting summary. Call `mcp__ccr__gcc_commit` EXACTLY ONCE
 with these arguments:
@@ -232,9 +238,51 @@ with these arguments:
 - why: "{context_note}"
 - files_changed: []
 - next_step: the first open action item from the summary, or "" if there are none.
+"""
 
+    if not mounted_projects:
+        return base + f"""
 After the commit returns, reply with ONLY the commit id it returned. Do not add
 any other text.
+
+## Meeting summary
+{summary_md}
+"""
+
+    proj_lines = "\n".join(
+        f"- **{p.get('name')}** ({p.get('reason')}) — commit with "
+        f"`mcp__ccr_{p.get('slug')}__gcc_commit`."
+        for p in mounted_projects
+    )
+    return base + f"""
+## Project write-back
+These project memory stores are ALSO mounted, writable, because the meeting was
+routed to them:
+
+{proj_lines}
+
+AFTER the recoder commit, look at the summary's `## Project Mapping` and
+`## Action Items` sections. For EACH mounted project the meeting genuinely
+concerned, call that project's `gcc_commit` ONCE with:
+- title: "Meeting: {title} ({date})"
+- what: ONLY the parts relevant to that project — the decisions that affect it
+  and its action items. Keep it short; this lands in a coding session's context.
+- why: "meeting write-back: {context_note}"
+- files_changed: []
+- next_step: that project's first open action item, or "".
+
+Skip any mounted project the meeting did not actually concern — an irrelevant
+note pollutes that project's memory.
+
+## Reply format
+Reply with the recoder commit id on the FIRST line by itself. Then one line per
+project write-back you made, in exactly the form `<slug>: <commit id>`, e.g.:
+
+    C042
+    sherpa: C481
+    billing_service: C102
+
+No other text.
 
 ## Meeting summary
 {summary_md}

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from recoder.analysis.action_items import extract_action_items
 from recoder.config import Config
 from recoder.store import Meeting, MeetingStore
 from recoder.web.recording import RecordingManager
@@ -124,11 +125,13 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
     def meeting_detail(name: str) -> dict:
         meeting = _resolve_meeting(name)
         meta = meeting.read_meta()
+        summary = _read_text(meeting.summary_md)
         return {
             "folder": meeting.folder.name,
             "meta": meta,
             "transcript": _read_text(meeting.transcript_md),
-            "summary": _read_text(meeting.summary_md),
+            "summary": summary,
+            "action_items": extract_action_items(summary),
             "frames": _frame_files(meeting),
         }
 

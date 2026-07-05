@@ -110,6 +110,12 @@
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 16px; white-space: pre-wrap; word-wrap: break-word; font: 13px/1.6 ui-monospace, "Cascadia Code", Menlo, monospace;
   }
+  table.ai { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
+  table.ai th, table.ai td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  table.ai th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  table.ai tr:last-child td { border-bottom: none; }
+  table.ai td.owner { color: var(--accent); white-space: nowrap; }
+  table.ai td.due { color: var(--warn); white-space: nowrap; }
   .frames-strip { display: flex; gap: 8px; overflow-x: auto; padding: 6px 0 12px; }
   .frames-strip img { height: 88px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
   .toggle-row { display: flex; gap: 10px; align-items: center; margin: 16px 0 8px; }
@@ -289,6 +295,7 @@ async function openMeeting(folder) {
       <button class="action ghost" onclick="reprocess('${folder}')">Reprocess</button>
       ${d.transcript ? `<button class="action ghost" onclick="toggleTranscript()">Toggle transcript</button>` : ""}
     </div>
+    ${renderActionItems(d.action_items)}
     ${framesHtml ? `<div class="frames-strip">${framesHtml}</div>` : ""}
     <h3>Summary</h3>
     <pre class="doc">${d.summary ? escapeHtml(d.summary) : "No summary yet."}</pre>
@@ -296,6 +303,17 @@ async function openMeeting(folder) {
       <h3>Transcript</h3>
       <pre class="doc">${d.transcript ? escapeHtml(d.transcript) : ""}</pre>
     </div>`;
+}
+function renderActionItems(items) {
+  if (!items || !items.length) return "";
+  const rows = items.map((it) => `<tr>
+    <td class="owner">${escapeHtml(it.owner || "—")}</td>
+    <td>${escapeHtml(it.task || "")}</td>
+    <td class="due">${escapeHtml(it.due || "")}</td>
+  </tr>`).join("");
+  return `<h3>Action Items</h3>
+    <table class="ai"><thead><tr><th>Owner</th><th>Task</th><th>Due</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
 }
 function toggleTranscript() {
   const b = $("transcript-box");

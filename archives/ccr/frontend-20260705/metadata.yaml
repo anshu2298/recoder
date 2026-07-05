@@ -1,0 +1,13 @@
+branches:
+- created: '2026-06-11'
+  name: main
+  parent: null
+  status: active
+config:
+  framework: unknown
+  language: unknown
+created: '2026-06-11'
+dependencies: []
+file_tree: []
+proactive_commits: true
+version: 1

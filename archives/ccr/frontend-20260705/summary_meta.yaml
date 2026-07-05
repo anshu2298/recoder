@@ -1,0 +1,13 @@
+overview:
+  last_generated: null
+  phase_count_at_generation: 0
+phase:
+  last_commit_id: null
+  last_generated: null
+  last_summary_id: null
+session:
+  main:
+    last_commit_count: 5
+    last_generated: '2026-06-11T10:09:06'
+    last_summary_id: S001
+version: 1

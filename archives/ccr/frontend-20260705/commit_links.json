@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "links": {
+    "C003": {
+      "entity": [
+        {
+          "target": "C002",
+          "score": 0.083,
+          "created_at": "2026-06-11T09:59:58.825430+00:00",
+          "shared_files": [
+            "frontend/src/test/sales-sprint/artifact-repo.test.js"
+          ]
+        }
+      ]
+    },
+    "C002": {
+      "entity": [
+        {
+          "target": "C003",
+          "score": 0.083,
+          "created_at": "2026-06-11T09:59:58.834433+00:00",
+          "shared_files": [
+            "frontend/src/test/sales-sprint/artifact-repo.test.js"
+          ]
+        }
+      ]
+    },
+    "C005": {
+      "semantic": [
+        {
+          "target": "C004",
+          "score": 0.733,
+          "created_at": "2026-06-11T10:09:06.410902+00:00"
+        },
+        {
+          "target": "C006",
+          "score": 0.521,
+          "created_at": "2026-06-11T10:13:34.992824+00:00"
+        },
+        {
+          "target": "C007",
+          "score": 0.733,
+          "created_at": "2026-06-11T10:21:00.890483+00:00"
+        }
+      ]
+    },
+    "C004": {
+      "semantic": [
+        {
+          "target": "C005",
+          "score": 0.733,
+          "created_at": "2026-06-11T10:09:06.421951+00:00"
+        },
+        {
+          "target": "C006",
+          "score": 0.489,
+          "created_at": "2026-06-11T10:13:35.002828+00:00"
+        },
+        {
+          "target": "C007",
+          "score": 1.0,
+          "created_at": "2026-06-11T10:21:00.898489+00:00"
+        }
+      ]
+    },
+    "C006": {
+      "semantic": [
+        {
+          "target": "C005",
+          "score": 0.521,
+          "created_at": "2026-06-11T10:13:34.982818+00:00"
+        },
+        {
+          "target": "C004",
+          "score": 0.489,
+          "created_at": "2026-06-11T10:13:34.982818+00:00"
+        },
+        {
+          "target": "C007",
+          "score": 0.489,
+          "created_at": "2026-06-11T10:21:00.879847+00:00"
+        }
+      ]
+    },
+    "C007": {
+      "semantic": [
+        {
+          "target": "C006",
+          "score": 0.489,
+          "created_at": "2026-06-11T10:21:00.868736+00:00"
+        },
+        {
+          "target": "C005",
+          "score": 0.733,
+          "created_at": "2026-06-11T10:21:00.868736+00:00"
+        },
+        {
+          "target": "C004",
+          "score": 1.0,
+          "created_at": "2026-06-11T10:21:00.868736+00:00"
+        }
+      ]
+    }
+  }
+}

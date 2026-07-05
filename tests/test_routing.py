@@ -238,11 +238,20 @@ def test_recoder_self_exclusion() -> None:
 
 
 # --- prune predicate (memory-clean) -------------------------------------------
-def test_is_prunable_junk_and_stale_empty() -> None:
+def test_is_prunable_junk_and_stale_empty(tmp_path) -> None:
     assert is_prunable(_entry("x", r"G:\a\node_modules\x"), now=NOW)
     # empty store unused > 30 days
     assert is_prunable(_entry("dead", r"G:\a\dead", commits=0, days=40), now=NOW)
-    # empty but recent -> keep
-    assert not is_prunable(_entry("fresh", r"G:\a\fresh", commits=0, days=5), now=NOW)
-    # has commits -> keep even if old
-    assert not is_prunable(_entry("live", r"G:\a\live", commits=9, days=90), now=NOW)
+    # empty but recent -> keep (dir must exist, else the ghost rule applies)
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    assert not is_prunable(_entry("fresh", str(fresh), commits=0, days=5), now=NOW)
+    # has commits and exists on disk -> keep even if old
+    live = tmp_path / "live"
+    live.mkdir()
+    assert not is_prunable(_entry("live", str(live), commits=9, days=90), now=NOW)
+
+
+def test_is_prunable_ghost_path() -> None:
+    # entry with commits but whose directory was deleted -> ghost, prune
+    assert is_prunable(_entry("ghost", r"G:\definitely\not\there", commits=9, days=2), now=NOW)

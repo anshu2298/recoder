@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "triples": [
+    {
+      "subject": "3 tenant/team-boundary bugs",
+      "predicate": "fixed_in",
+      "object": "team-scoped Relationship Threads",
+      "source_commit": "C002",
+      "confidence": 0.8,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/migrations/103_relationship_threads_team_scope.sql",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/lib/sales-sprint/team-scope.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/lib/sales-sprint/thread-repo.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/lib/sales-sprint/artifact-repo.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/app/api/sales-sprint/threads/route.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/app/api/sales-sprint/threads/by-review/route.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/test/sales-sprint/team-scope.test.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/test/sales-sprint/thread-repo-team-scope.test.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/test/sales-sprint/cross-team-route-isolation.test.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/test/sales-sprint/artifact-repo.test.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "frontend/src/test/sales-sprint/rls-migration-103.test.js",
+      "predicate": "modified_in",
+      "object": "C002",
+      "source_commit": "C002",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:54:22.463318+00:00"
+    },
+    {
+      "subject": "103 entry",
+      "predicate": "updated_to",
+      "object": "document the new tenant-scoped get_user_team_id(p_user_id",
+      "source_commit": "C003",
+      "confidence": 0.7,
+      "timestamp": "2026-06-11T09:59:58.870050+00:00"
+    },
+    {
+      "subject": "frontend/src/test/sales-sprint/artifact-repo.test.js",
+      "predicate": "modified_in",
+      "object": "C003",
+      "source_commit": "C003",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:59:58.870050+00:00"
+    },
+    {
+      "subject": "frontend/docs/02-tech/data-and-migrations.md",
+      "predicate": "modified_in",
+      "object": "C003",
+      "source_commit": "C003",
+      "confidence": 1.0,
+      "timestamp": "2026-06-11T09:59:58.870050+00:00"
+    }
+  ]
+}

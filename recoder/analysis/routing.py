@@ -161,7 +161,9 @@ def is_prunable(
 ) -> bool:
     """True if ``memory-clean`` should drop this entry.
 
-    Junk, OR an empty store (commit_count == 0) unused for > ``empty_max_age_days``.
+    Junk, OR an empty store (commit_count == 0) unused for > ``empty_max_age_days``,
+    OR a ghost: the project directory no longer exists on disk (its store, if any,
+    was deleted with it — the registry entry points at nothing).
     """
     if is_junk(entry):
         return True
@@ -169,6 +171,8 @@ def is_prunable(
         last = entry.last_used or _MIN
         if (now - last).days > empty_max_age_days:
             return True
+    if not Path(entry.path).exists():
+        return True
     return False
 
 

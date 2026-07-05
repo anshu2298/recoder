@@ -106,27 +106,32 @@ def _check_whisperx() -> str:
 
 def _check_hf_token() -> str:
     if os.environ.get("HF_TOKEN"):
-        return _line(PASS, "HuggingFace token", "env HF_TOKEN")
+        return _line(PASS, "HuggingFace token (local STT fallback)", "env HF_TOKEN")
     token_file = Path.home() / ".cache" / "huggingface" / "token"
     if token_file.exists() and token_file.read_text(encoding="utf-8").strip():
-        return _line(PASS, "HuggingFace token", str(token_file))
-    return _line(
-        FAIL,
-        "HuggingFace token",
-        "not found",
-        "Set HF_TOKEN or run `huggingface-cli login`; accept the pyannote model license.",
-    )
+        return _line(PASS, "HuggingFace token (local STT fallback)", str(token_file))
+    return _line(SKIP, "HuggingFace token (local STT fallback)", "not set — only needed for local whisperX")
+
+
+def _check_gladia(cfg) -> str:
+    if not cfg.gladia_api_key:
+        return _line(
+            FAIL,
+            "Gladia API key",
+            "not set",
+            "Sign up free at app.gladia.io, then set GLADIA_API_KEY or gladia_api_key in recoder.toml.",
+        )
+    return _line(PASS, "Gladia API key", f"set ({len(cfg.gladia_api_key)} chars)")
 
 
 def _check_ffmpeg() -> str:
     path = shutil.which("ffmpeg")
     if path:
-        return _line(PASS, "ffmpeg on PATH", path)
+        return _line(PASS, "ffmpeg on PATH (local STT fallback)", path)
     return _line(
-        FAIL,
-        "ffmpeg on PATH",
-        "not found",
-        "Install ffmpeg and add it to PATH (winget install Gyan.FFmpeg).",
+        SKIP,
+        "ffmpeg on PATH (local STT fallback)",
+        "not found — only needed for local whisperX (winget install Gyan.FFmpeg)",
     )
 
 
@@ -179,6 +184,7 @@ def run_doctor(full: bool = False) -> int:
         _check_python(),
         _check_loopback(),
         _check_mic(),
+        _check_gladia(cfg),
         _check_torch(),
         _check_whisperx(),
         _check_hf_token(),

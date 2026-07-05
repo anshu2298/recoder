@@ -6,6 +6,8 @@ the prompts can be snapshot-tested without touching Claude or the filesystem.
 
 from __future__ import annotations
 
+from datetime import date as _date
+
 # The summary.md section contract. The analysis session MUST emit a markdown
 # document containing exactly these headers, in this order. session.py validates
 # their presence and issues one corrective turn if any are missing.
@@ -83,23 +85,66 @@ def _fmt_duration(duration_s: float) -> str:
     return f"{minutes}m {secs}s"
 
 
+def render_mounted_projects(mounted_projects: list[dict]) -> str:
+    """Render the routed foreign-store mounts as an instruction block.
+
+    Each mount exposes ``mcp__ccr_<slug>__gcc_search`` and
+    ``mcp__ccr_<slug>__gcc_context`` (read-only). Tells Claude to search the
+    relevant stores BEFORE summarizing and cite matching work concretely.
+    """
+    if not mounted_projects:
+        return (
+            "No additional project stores were mounted for this meeting. Use the "
+            "recoder store's `gcc_search`/`gcc_context` for any relevant history."
+        )
+
+    lines = [
+        "In addition to the recoder store, these project memory stores are "
+        "mounted READ-ONLY for this meeting (they were selected because they "
+        "match the meeting topic or are actively worked on):",
+        "",
+    ]
+    for proj in mounted_projects:
+        slug = str(proj.get("slug") or "")
+        name = str(proj.get("name") or "")
+        reason = str(proj.get("reason") or "")
+        lines.append(
+            f"- **{name}** ({reason}) — search with "
+            f"`mcp__ccr_{slug}__gcc_search`, read context with "
+            f"`mcp__ccr_{slug}__gcc_context`."
+        )
+    lines += [
+        "",
+        "BEFORE you write the summary, search the relevant project stores above "
+        "for work related to what was discussed (recent commits, decisions, open "
+        "threads). When the meeting clearly relates to that work, cite it "
+        "concretely in the summary — e.g. \"relates to the retry-queue refactor "
+        "(C078, sherpa-linkedin-enrich)\". Do NOT write to these stores; they are "
+        "read-only.",
+    ]
+    return "\n".join(lines)
+
+
 def build_analysis_prompt(
     meta: dict,
     transcript_md: str,
     frame_inventory: list[dict],
     duration_s: float,
+    mounted_projects: list[dict] | None = None,
 ) -> str:
     """Build the full analysis prompt for one meeting.
 
     Frames are delivered via the filesystem: the session's cwd is the meeting
     folder and this prompt lists the ``frames/`` inventory; Claude reads the
-    images it deems relevant with the Read tool.
+    images it deems relevant with the Read tool. ``mounted_projects`` lists the
+    foreign CCR stores routed into this session (see :mod:`recoder.analysis.routing`).
     """
     title = str(meta.get("title") or "Untitled meeting")
     context_note = str(meta.get("context_note") or "").strip() or "(none provided)"
     started_at = str(meta.get("started_at") or "unknown")
     duration = _fmt_duration(duration_s)
     frame_table = render_frame_table(frame_inventory)
+    mounts_block = render_mounted_projects(mounted_projects or [])
 
     sections_list = "\n".join(f"  - {s}" for s in REQUIRED_SECTIONS)
 
@@ -133,9 +178,13 @@ off-topic desktop content.
 {frame_table}
 
 ## Project memory (CCR)
-BEFORE you write the summary, use `gcc_search` and `gcc_context` to pull related
-project memory. Search for the people, projects, and topics named in the
-transcript so your summary connects this meeting to the user's existing work.
+BEFORE you write the summary, use `gcc_search` and `gcc_context` on the recoder
+store to pull related project memory. Search for the people, projects, and topics
+named in the transcript so your summary connects this meeting to the user's
+existing work.
+
+### Project memory available
+{mounts_block}
 
 ## Required output
 Write ONE complete markdown document with EXACTLY these sections, in this order:
@@ -150,8 +199,9 @@ Section requirements:
 - `## Action Items`: a markdown table with columns Owner, Task, Due (leave Due
   blank unless a due date/time was actually stated).
 - `## Open Questions`: unresolved questions or follow-ups.
-- `## Project Mapping`: which CCR projects/memories this meeting relates to,
-  based on your gcc_search/gcc_context results.
+- `## Project Mapping`: which CCR project store(s) each discussion topic maps
+  to, naming the specific store (e.g. "billing -> sherpa-linkedin-enrich") and
+  citing concrete commits/decisions where your searches found them.
 - `## Speakers`: a table mapping each SPEAKER_n to a probable real name with the
   evidence for it (e.g. "addressed by name at 14:32"), or "unknown" if there is
   no evidence.
@@ -188,4 +238,47 @@ any other text.
 
 ## Meeting summary
 {summary_md}
+"""
+
+
+def build_consolidation_prompt(source_name: str, target_name: str) -> str:
+    """Prompt for distilling a worktree store into its parent store (Piece B).
+
+    Two stores are mounted: ``ccr_source`` (READ-ONLY: gcc_search + gcc_context)
+    and ``ccr_target`` (gcc_search + gcc_context + gcc_commit). The session reads
+    the source's full history and writes 3-8 milestone commits onto the target.
+    """
+    today = _date.today().isoformat()
+    return f"""You are consolidating one CCR project-memory store into another so a
+fragmented worktree's history is preserved in its parent project before the
+worktree store is archived.
+
+## Mounted stores
+- SOURCE = "{source_name}" — READ-ONLY. Read it with `mcp__ccr_source__gcc_search`
+  and `mcp__ccr_source__gcc_context`. Do NOT write to it.
+- TARGET = "{target_name}" — write here with `mcp__ccr_target__gcc_commit`
+  (you may also `mcp__ccr_target__gcc_search` / `mcp__ccr_target__gcc_context`).
+
+## Step 1 — read the source's full history
+Call `mcp__ccr_source__gcc_context` at a deep level (level=4, and level=5 with
+search terms for specific threads) with a generous `result_limit` and
+`include_summaries=true` to page through the ENTIRE source history — every
+milestone, decision, and dead end. Use `mcp__ccr_source__gcc_search` to fill in
+gaps around notable topics. Do not summarize until you have surveyed it all.
+
+## Step 2 — distill into milestone commits on the target
+Write between 3 and 8 `mcp__ccr_target__gcc_commit` calls. Each commit must cover
+one coherent theme (a feature shipped, a cluster of key decisions, a pattern or
+convention learned, or a dead end worth remembering — NOT one-per-original-commit).
+For each commit:
+- title: prefix with "[from {source_name}] " then a concise theme title.
+- what: the substance — what was built/decided/learned for that theme.
+- why: include the consolidation provenance — "consolidated from {source_name} on
+  {today}" plus the date range of the source work it covers.
+- files_changed: [] (this is a memory consolidation, not a code change).
+- next_step: a genuinely open thread from the source if one exists, else "".
+
+## Step 3 — reply
+After all commits succeed, reply with ONLY the list of target commit ids you
+created (e.g. "C081, C082, C083"). Nothing else.
 """

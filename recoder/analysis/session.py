@@ -17,18 +17,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from recoder.analysis import routing
 from recoder.analysis.prompts import (
     REQUIRED_SECTIONS,
     build_analysis_prompt,
     build_commit_prompt,
 )
 from recoder.store import MeetingStore
+
+logger = logging.getLogger(__name__)
 
 # --- tuning constants (config-free, per spec) --------------------------------
 SESSION_TIMEOUT_S = 20 * 60  # 20 minutes; wraps the whole SDK session.
@@ -84,33 +89,131 @@ def _default_session_runner(prompt: str, options: object) -> str:
     return asyncio.run(_run_with_timeout())
 
 
-def _build_options(meeting_folder: Path, config: object, max_turns: int) -> object:
-    """Build ClaudeAgentOptions mirroring Spike C's proven config."""
+# --- CCR MCP-server wiring (shared with consolidate.py) ----------------------
+def mcp_args_for_project(config: object, project_path: str | Path) -> list[str]:
+    """Copy ``config.ccr_mcp_args`` but point ``--project`` at ``project_path``."""
+    args = list(config.ccr_mcp_args)
+    if "--project" in args:
+        idx = args.index("--project")
+        if idx + 1 < len(args):
+            args[idx + 1] = str(project_path)
+        else:
+            args.append(str(project_path))
+    else:
+        args += ["--project", str(project_path)]
+    return args
+
+
+def ccr_server_for_project(config: object, project_path: str | Path) -> dict:
+    """A stdio MCP-server spec launching the CCR server on ``project_path``."""
+    return {
+        "type": "stdio",
+        "command": config.ccr_mcp_command,
+        "args": mcp_args_for_project(config, project_path),
+    }
+
+
+def build_session_options(
+    cwd: Path,
+    config: object,
+    max_turns: int,
+    mcp_servers: dict,
+    allowed_tools: list[str],
+) -> object:
+    """Assemble ClaudeAgentOptions from explicit servers/tools (Spike C config)."""
     from claude_agent_sdk import ClaudeAgentOptions
 
     kwargs: dict[str, object] = {
-        "cwd": str(meeting_folder),
+        "cwd": str(cwd),
         "permission_mode": "bypassPermissions",
-        "mcp_servers": {
-            "ccr": {
-                "type": "stdio",
-                "command": config.ccr_mcp_command,
-                "args": list(config.ccr_mcp_args),
-            }
-        },
-        "allowed_tools": [
-            "Read",
-            "Glob",
-            "mcp__ccr__gcc_search",
-            "mcp__ccr__gcc_context",
-            "mcp__ccr__gcc_commit",
-        ],
+        "mcp_servers": mcp_servers,
+        "allowed_tools": allowed_tools,
         "max_turns": max_turns,
     }
     model = getattr(config, "analysis_model", None) or getattr(config, "model", None)
     if model:
         kwargs["model"] = model
     return ClaudeAgentOptions(**kwargs)
+
+
+def _project_path_from_args(config: object) -> str:
+    """The recoder store path baked into ``config.ccr_mcp_args`` (for exclusion)."""
+    args = list(config.ccr_mcp_args)
+    if "--project" in args:
+        idx = args.index("--project")
+        if idx + 1 < len(args):
+            return str(args[idx + 1])
+    return ""
+
+
+def _slugify_project(name: str, used: set[str]) -> str:
+    """Lowercase alnum/underscore slug from a project name, deduped in ``used``."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "proj"
+    candidate = slug
+    n = 2
+    while candidate in used:
+        candidate = f"{slug}_{n}"
+        n += 1
+    used.add(candidate)
+    return candidate
+
+
+def _route_mounts(meta: dict, config: object) -> list[tuple[str, routing.RoutedProject]]:
+    """Route the meeting to foreign stores; return (slug, RoutedProject) pairs.
+
+    Any registry read/route failure degrades to no mounts (analysis proceeds
+    with just the recoder store).
+    """
+    try:
+        entries = routing.load_registry(config.ccr_registry_path)
+        routed = routing.route_projects(
+            entries,
+            str(meta.get("title") or ""),
+            str(meta.get("context_note") or ""),
+            now=datetime.now(timezone.utc),
+            recency_days=getattr(config, "routing_recency_days", 7),
+            max_mounts=getattr(config, "routing_max_mounts", 4),
+            exclude_paths=(_project_path_from_args(config),),
+        )
+    except Exception as exc:  # noqa: BLE001 - routing must never break analysis
+        logger.warning("project routing failed; mounting recoder store only: %r", exc)
+        return []
+
+    used: set[str] = set()
+    return [(_slugify_project(rp.name, used), rp) for rp in routed]
+
+
+def _build_options(
+    meeting_folder: Path,
+    config: object,
+    max_turns: int,
+    *,
+    mounts: list[tuple[str, routing.RoutedProject]] | None = None,
+) -> object:
+    """Build ClaudeAgentOptions: the recoder store plus any routed read-only mounts."""
+    mcp_servers: dict[str, object] = {
+        "ccr": {
+            "type": "stdio",
+            "command": config.ccr_mcp_command,
+            "args": list(config.ccr_mcp_args),
+        }
+    }
+    allowed_tools: list[str] = [
+        "Read",
+        "Glob",
+        "mcp__ccr__gcc_search",
+        "mcp__ccr__gcc_context",
+        "mcp__ccr__gcc_commit",
+    ]
+    for slug, rp in mounts or []:
+        mcp_servers[f"ccr_{slug}"] = ccr_server_for_project(config, rp.path)
+        # READ-ONLY: search + context only, never gcc_commit on a foreign store.
+        allowed_tools.append(f"mcp__ccr_{slug}__gcc_search")
+        allowed_tools.append(f"mcp__ccr_{slug}__gcc_context")
+
+    return build_session_options(
+        meeting_folder, config, max_turns, mcp_servers, allowed_tools
+    )
 
 
 # --- helpers ------------------------------------------------------------------
@@ -256,9 +359,22 @@ def analyze(
 
     from recoder.analysis.prompts import render_transcript
 
+    mounts = _route_mounts(meta, config)
+    mounted_projects = [
+        {"slug": slug, "name": rp.name, "reason": rp.reason} for slug, rp in mounts
+    ]
+
     transcript_md = render_transcript(segments)
-    prompt = build_analysis_prompt(meta, transcript_md, frame_inventory, duration_s)
-    options = _build_options(meeting_folder, config, ANALYZE_MAX_TURNS)
+    prompt = build_analysis_prompt(
+        meta,
+        transcript_md,
+        frame_inventory,
+        duration_s,
+        mounted_projects=mounted_projects,
+    )
+    options = _build_options(
+        meeting_folder, config, ANALYZE_MAX_TURNS, mounts=mounts
+    )
 
     raw = _run_with_retries(runner, prompt, options, sleep)
     summary = _extract_summary(raw)

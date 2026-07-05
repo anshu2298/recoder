@@ -40,6 +40,19 @@ class Config:
         default_factory=lambda: ["-m", "ccr.mcp_server", "--project", r"G:\recoder"]
     )
 
+    # --- CCR project-memory routing (Piece A) --------------------------------
+    # Global CCR registry that maps every project path to its store metadata.
+    ccr_registry_path: Path = Path(r"C:\Users\anshu\.ccr\projects.json")
+    # A routed project counts as "recent" if used within this many days.
+    routing_recency_days: int = 7
+    # Never mount more than this many foreign stores into an analysis session.
+    routing_max_mounts: int = 4
+
+    # --- Worktree memory consolidation (Piece B) -----------------------------
+    # Base dir under which a consolidated source store is archived (never
+    # deleted): <consolidation_archive_dir>/<source-name>-<YYYYMMDD>.
+    consolidation_archive_dir: Path = Path(r"G:\recoder\archives\ccr")
+
     # --- Gladia hosted STT (default engine, spec §4.2 step 1) ----------------
     # API key resolves from env GLADIA_API_KEY, with a recoder.toml override.
     gladia_api_key: str | None = None
@@ -61,6 +74,10 @@ _SCALAR_KEYS = {
     "window_title_patterns",
     "ccr_mcp_command",
     "ccr_mcp_args",
+    "ccr_registry_path",
+    "routing_recency_days",
+    "routing_max_mounts",
+    "consolidation_archive_dir",
     "gladia_api_key",
     "gladia_base_url",
     "gladia_poll_interval_s",
@@ -87,7 +104,7 @@ def load_config(override_file: Path | None = None) -> Config:
     for key, value in data.items():
         if key not in _SCALAR_KEYS:
             continue
-        if key == "meetings_dir":
+        if key in ("meetings_dir", "ccr_registry_path", "consolidation_archive_dir"):
             updates[key] = Path(value)
         else:
             updates[key] = value

@@ -107,6 +107,121 @@ def replay(folder: str = typer.Argument(...)) -> None:
     _run_pipeline(folder)
 
 
+@app.command(name="memory-clean")
+def memory_clean(
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the cleaned registry (default: dry run)."
+    ),
+) -> None:
+    """Prune junk/stale entries from the global CCR registry.
+
+    Junk = node_modules, __pycache__, .claude, site-packages, meeting folders,
+    drive roots, or empty names. Also drops empty stores (0 commits) unused for
+    over 30 days. Dry run by default; ``--apply`` backs up projects.json first.
+    """
+    from datetime import datetime, timezone
+
+    from recoder.analysis import routing
+    from recoder.config import load_config
+
+    config = load_config()
+    registry_path = config.ccr_registry_path
+    raw = routing.read_raw_registry(registry_path)
+    if not raw:
+        typer.echo(f"Registry empty or unreadable: {registry_path}")
+        return
+
+    now = datetime.now(timezone.utc)
+    prunable: list[dict] = []
+    kept: list[dict] = []
+    for d in raw:
+        entry = routing.entry_from_dict(d)
+        if routing.is_prunable(entry, now=now):
+            prunable.append(d)
+        else:
+            kept.append(d)
+
+    typer.echo(f"Registry: {registry_path}")
+    typer.echo(f"Total entries: {len(raw)}  keep: {len(kept)}  prune: {len(prunable)}")
+    typer.echo("")
+    if prunable:
+        typer.echo(f"{'commits':>7}  {'last_used':<20}  path")
+        for d in prunable:
+            e = routing.entry_from_dict(d)
+            last = e.last_used.date().isoformat() if e.last_used else "unknown"
+            typer.echo(f"{e.commit_count:>7}  {last:<20}  {e.path}")
+    else:
+        typer.echo("Nothing to prune.")
+        return
+
+    if not apply:
+        typer.echo("")
+        typer.echo("DRY RUN -- re-run with --apply to write the cleaned registry.")
+        return
+
+    backup = routing.backup_registry(registry_path)
+    routing.write_registry(registry_path, kept)
+    typer.echo("")
+    typer.echo(f"Backed up to: {backup}")
+    typer.echo(f"Wrote cleaned registry with {len(kept)} entries.")
+
+
+@app.command()
+def consolidate(
+    source: str = typer.Argument(..., help="Worktree project dir to consolidate FROM."),
+    target: str = typer.Argument(..., help="Parent project dir to consolidate INTO."),
+    apply: bool = typer.Option(
+        False,
+        "--apply/--dry-run",
+        help="Archive the source store + deregister it (default: dry run).",
+    ),
+    archive_dir: str = typer.Option(
+        None, "--archive-dir", help="Override the archive base directory."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt before archiving."
+    ),
+) -> None:
+    """Distill a worktree's CCR memory into its parent project's store."""
+    from recoder.analysis.consolidate import ConsolidationError, consolidate as _run
+    from recoder.config import load_config
+
+    config = load_config()
+    src = Path(source)
+    tgt = Path(target)
+
+    if apply and not yes:
+        typer.confirm(
+            f"Apply will ARCHIVE {src / '.ccr'} and deregister {src.name}. Continue?",
+            abort=True,
+        )
+
+    try:
+        result = _run(
+            src,
+            tgt,
+            config,
+            archive_dir=Path(archive_dir) if archive_dir else None,
+            apply=apply,
+        )
+    except ConsolidationError as exc:
+        typer.echo(f"Consolidation failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Distilled {src.name} -> {tgt.name}")
+    typer.echo(f"Target commits created: {', '.join(result.commit_ids)}")
+    if apply:
+        typer.echo(f"Archived source store to: {result.archived_to}")
+        typer.echo(
+            "Registry entry removed."
+            if result.registry_updated
+            else "Registry entry not found (nothing to remove)."
+        )
+    else:
+        typer.echo("DRY RUN -- source store left in place, registry untouched.")
+        typer.echo("Re-run with --apply to archive + deregister the source.")
+
+
 @app.command(name="app")
 def desktop_app() -> None:
     """Launch Recoder as a native desktop window (server runs in-process)."""

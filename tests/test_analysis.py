@@ -79,9 +79,34 @@ def _make_meeting(tmp_path: Path, *, segments=None, with_summary=False) -> Path:
     return folder
 
 
+def _write_registry(tmp_path: Path, rows: list[dict]) -> Path:
+    path = tmp_path / "projects.json"
+    path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
-    return Config(meetings_dir=tmp_path / "meetings")
+    # Empty registry keeps analyze() hermetic (no foreign mounts) by default.
+    registry = _write_registry(tmp_path, [])
+    return Config(meetings_dir=tmp_path / "meetings", ccr_registry_path=registry)
+
+
+class CapturingRunner:
+    """session_runner that records the options each call received."""
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.options: list[object] = []
+        self.prompts: list[str] = []
+
+    def __call__(self, prompt: str, options: object) -> str:
+        self.prompts.append(prompt)
+        self.options.append(options)
+        item = self._replies.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 class FakeRunner:
@@ -261,6 +286,72 @@ def test_commit_garbage_reply_raises(tmp_path: Path, cfg: Config) -> None:
 
     with pytest.raises(AnalysisError, match="no commit id"):
         commit_to_ccr(folder, cfg, session_runner=runner, sleep=_no_sleep)
+
+
+# --- project-memory routing into analysis (Piece A) ---------------------------
+def test_analyze_mounts_routed_project(tmp_path: Path) -> None:
+    folder = _make_meeting(tmp_path)  # title mentions "Billing"
+    other = tmp_path / "billing-service"
+    (other / ".ccr").mkdir(parents=True)
+    registry = _write_registry(
+        tmp_path,
+        [
+            {
+                "path": str(other),
+                "name": "billing-service",
+                "last_used": "2026-07-04T10:00:00+00:00",
+                "commit_count": 12,
+            }
+        ],
+    )
+    config = Config(meetings_dir=tmp_path / "meetings", ccr_registry_path=registry)
+    runner = CapturingRunner([FULL_SUMMARY])
+
+    analyze(folder, config, session_runner=runner, sleep=_no_sleep)
+
+    options = runner.options[0]
+    # recoder store always mounted, plus the routed foreign store (read-only).
+    assert "ccr" in options.mcp_servers
+    assert "ccr_billing_service" in options.mcp_servers
+    tools = set(options.allowed_tools)
+    assert "mcp__ccr_billing_service__gcc_search" in tools
+    assert "mcp__ccr_billing_service__gcc_context" in tools
+    assert "mcp__ccr_billing_service__gcc_commit" not in tools
+    # The prompt names the mounted project.
+    assert "billing-service" in runner.prompts[0]
+    assert "READ-ONLY" in runner.prompts[0]
+
+
+def test_analyze_registry_failure_still_runs_with_recoder_only(tmp_path: Path) -> None:
+    folder = _make_meeting(tmp_path)
+    corrupt = tmp_path / "projects.json"
+    corrupt.write_text("{ not valid json ]", encoding="utf-8")
+    config = Config(meetings_dir=tmp_path / "meetings", ccr_registry_path=corrupt)
+    runner = CapturingRunner([FULL_SUMMARY])
+
+    analyze(folder, config, session_runner=runner, sleep=_no_sleep)
+
+    assert (folder / "summary.md").exists()
+    options = runner.options[0]
+    assert set(options.mcp_servers) == {"ccr"}
+
+
+def test_analysis_prompt_lists_mounted_projects() -> None:
+    meta = {"title": "T", "context_note": "note", "started_at": "2026-07-05T14:30:00"}
+    mounted = [{"slug": "sherpa_enrich", "name": "sherpa-linkedin-enrich", "reason": "matched 'sherpa'"}]
+    prompt = prompts.build_analysis_prompt(meta, "tx", [], 60.0, mounted_projects=mounted)
+
+    assert "sherpa-linkedin-enrich" in prompt
+    assert "mcp__ccr_sherpa_enrich__gcc_search" in prompt
+    assert "Project memory available" in prompt
+
+
+def test_consolidation_prompt_mounts_and_roles() -> None:
+    p = prompts.build_consolidation_prompt("worktree-a", "parent-b")
+    assert "mcp__ccr_source__gcc_context" in p
+    assert "mcp__ccr_target__gcc_commit" in p
+    assert "[from worktree-a]" in p
+    assert "READ-ONLY" in p
 
 
 # --- no import-time dependency on the pipeline package ------------------------

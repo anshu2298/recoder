@@ -61,13 +61,13 @@ recoder/
 
 A resumable state machine; state persisted in `meta.json` (`recorded → transcribed → diarized → analyzed → committed → done`). Each stage is idempotent: rerunning the pipeline skips completed stages, so a crash never redoes finished work.
 
-1. **Transcribe + diarize:** the two channels are transcribed **separately** (never mixed — mixing would destroy the channel information that makes "Me" labeling deterministic):
-   - `audio-mic.flac` → whisperX `large-v3` → every segment labeled "Me".
-   - `audio-system.flac` → whisperX `large-v3`, then pyannote diarization (one-time free HuggingFace token, documented in setup) → SPEAKER_1, SPEAKER_2…
-   - The two segment lists are merged into one timeline using the wall-clock timing index from capture. Output: `transcript.json` (segments with speaker, start, end, text) + `transcript.md` (readable).
-   - **VRAM plan (hard requirement, 4GB card):** `compute_type="int8"`, `batch_size=4`. Models run strictly sequentially and are explicitly unloaded between phases: whisper transcribe → free → alignment model → free → pyannote. Default whisperX settings (batch 16, co-resident alignment model) will CUDA-OOM on this card.
-   - **Hinglish handling (accepted trade-off):** whisperX word-level alignment uses a single-language wav2vec2 model and degrades on code-switched speech. Word-level alignment runs only for segments whisper marks as English; Hindi/mixed segments keep segment-level timestamps, and speaker assignment for those uses segment-midpoint overlap with diarization turns. Note for the implementer: whisper detects one language per file by default — per-segment routing needs per-segment language probabilities (available from faster-whisper segment metadata) or a cheap script-based heuristic (Devanagari characters in output); not just a flag. Slightly coarser speaker boundaries on Hindi speech is acceptable; transcription itself (large-v3) handles code-switching at segment level.
-   - **Pluggable STT interface:** `Transcriber` protocol with the local whisperX implementation as default; a hosted implementation (e.g. Groq Whisper) can be added later behind a config flag if local speed ever disappoints. Privacy trade-off documented at that point, not now.
+1. **Transcribe + diarize (DEFAULT: Gladia hosted API — decision revised 2026-07-05, user choice):** the two channels are transcribed **separately** (never mixed — mixing would destroy the channel information that makes "Me" labeling deterministic):
+   - `audio-mic.flac` → Gladia async API, no diarization → every segment labeled "Me".
+   - `audio-system.flac` → Gladia async API with `diarization: true` → SPEAKER_1, SPEAKER_2…
+   - Gladia contract: `POST https://api.gladia.io/v2/upload` (multipart field `audio`, header `x-gladia-key`) → `{audio_url}`; then `POST /v2/pre-recorded` with `{audio_url, diarization, language_config: {languages: ["en","hi"], code_switching: true}}` → `{id, result_url}`; poll `GET /v2/pre-recorded/{id}` until status done/error. Raw API responses saved to the meeting folder (`gladia-mic.json`, `gladia-system.json`) for debuggability and reprocessing without re-spending API hours.
+   - Rationale for hosted default: free tier 10 h/month with diarization included; Whisper-based (strong on Hinglish/code-switching); deletes pyannote, HF token, and VRAM sequencing from the required path. Privacy accepted knowingly — the user already uploads full calls to Fathom. Beyond free tier ≈ $0.61/h. API key in env `GLADIA_API_KEY` or `recoder.toml`.
+   - The two segment lists are merged into one timeline using the wall-clock timing index from capture. Output: `transcript.json` (schema: `{"segments": [{"speaker": "Me"|"SPEAKER_n", "start": float, "end": float, "text": str, "language": str|null}], "source": str}`) + `transcript.md` (readable).
+   - **Pluggable STT interface:** `Transcriber` protocol; `GladiaTranscriber` is the default. A local `WhisperXTranscriber` (int8, batch_size=4, strict sequential model residency — mandatory on the 4GB card) remains an optional offline fallback behind the `[ml]` extras; currently blocked by a `transformers<5` pin (import error found in Spike B), fix only if/when the local path is actually wanted.
 2. **Analyze (Claude):** one Claude Agent SDK session, configured for unattended operation:
    - **Inputs:** the diarized transcript and meeting metadata (title, context note, duration, date) go in the prompt. **Frames are delivered via the filesystem**: the session's working directory is the meeting folder and the prompt lists the `frames/` inventory with timestamps; Claude reads the images it deems relevant with the Read tool (multi-turn, so no per-request image cap applies — no sampling/cap logic needed on our side).
    - **CCR access:** the CCR MCP server is wired explicitly into the SDK `mcp_servers` config (the interactive Claude Code hook that auto-loads CCR does NOT apply to programmatic SDK sessions). Tool names confirmed against the installed CCR: `gcc_search`, `gcc_context`, `gcc_commit`.
@@ -111,10 +111,11 @@ Raw audio is retained (it is the true source of truth; re-transcription stays po
 
 ## 6. Setup prerequisites (documented in README)
 
-- Python 3.11+, CUDA-enabled PyTorch, ffmpeg.
-- HuggingFace token with pyannote model license accepted (free, one-time).
+- Python 3.11+, ffmpeg.
+- Gladia API key (free signup at app.gladia.io — 10 h/month free) in `GLADIA_API_KEY` or `recoder.toml`.
 - `claude` CLI logged in (already true on this machine).
 - CCR installed globally (already true).
+- Optional, only for the local STT fallback: CUDA PyTorch + whisperX (`[ml]` extras) + HuggingFace token with pyannote license.
 
 ## 7. Testing
 

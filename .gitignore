@@ -1,0 +1,4 @@
+﻿meetings/
+__pycache__/
+.venv/
+*.log

@@ -9,3 +9,4 @@ recoder.toml
 
 # CCR context directory
 .ccr/
+archives/

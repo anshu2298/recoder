@@ -1,8 +1,14 @@
 """Dual-channel audio capture for Recoder (spec 4.1, error handling 5).
 
-Records two synchronized WASAPI streams to streaming FLAC files:
+Records synchronized WASAPI streams to streaming FLAC files:
 
   * ``system`` — WASAPI loopback of the default output device (everyone else).
+  * ``system2``.. — loopback of every OTHER render device (best-effort).
+    Meeting apps route call audio to Windows' default *communications*
+    device, which is often a different device than the default *media*
+    output the primary loopback taps — tapping only the default silently
+    loses the far side of a call. All candidates are recorded; the pipeline
+    picks the loudest at transcription time.
   * ``mic``    — the default input device (the user).
 
 Each channel runs in its own thread, reading fixed-size buffers and writing
@@ -43,6 +49,8 @@ __all__ = [
 
 # Frames per read/write buffer. ~21ms at 48kHz — cheap, low-latency.
 _DEFAULT_CHUNK_FRAMES = 1024
+# At most this many system loopback devices are recorded (default + extras).
+_MAX_SYSTEM_SOURCES = 4
 # Flush (and emit a timing/level entry) at least this often.
 _DEFAULT_FLUSH_INTERVAL_S = 1.0
 # Re-open backoff schedule; the last value repeats until success or stop.
@@ -100,10 +108,15 @@ class RecordingResult:
     mic: ChannelResult
     system: ChannelResult
     duration_s: float  # wall-clock start->stop
+    extras: tuple[ChannelResult, ...] = ()  # additional system loopbacks
 
     @property
     def gap_count(self) -> int:
-        return self.mic.gap_count + self.system.gap_count
+        return (
+            self.mic.gap_count
+            + self.system.gap_count
+            + sum(c.gap_count for c in self.extras)
+        )
 
 
 class AudioRecorder:
@@ -116,8 +129,12 @@ class AudioRecorder:
     timing_index_path:
         Shared JSONL sidecar for wall-clock timing entries and events.
     source_factory:
-        Optional callable returning ``(mic_source, system_source)`` as
-        :class:`StreamSource` instances (already constructed, not yet opened).
+        Optional callable returning ``(mic_source, system_source)`` or
+        ``(mic_source, [system_sources...])`` as :class:`StreamSource`
+        instances (already constructed, not yet opened). With a list, the
+        first system source is the required default; the rest are extra
+        loopback devices recorded best-effort to ``<system>-2.flac``.. so a
+        call routed to a non-default output device is still captured.
         Defaults to the production pyaudiowpatch factory. Tests inject fakes.
     on_level:
         Optional callback ``(channel, rms)`` invoked ~once per second per
@@ -130,7 +147,7 @@ class AudioRecorder:
         system_path: Path,
         timing_index_path: Path,
         *,
-        source_factory: Callable[[], tuple[StreamSource, StreamSource]] | None = None,
+        source_factory: Callable[[], tuple] | None = None,
         on_level: Callable[[str, float], None] | None = None,
         chunk_frames: int = _DEFAULT_CHUNK_FRAMES,
         flush_interval_s: float = _DEFAULT_FLUSH_INTERVAL_S,
@@ -163,15 +180,25 @@ class AudioRecorder:
         return self._recording
 
     def start(self) -> None:
-        """Open both devices and begin recording. Raises on device failure."""
+        """Open the devices and begin recording. Raises on device failure."""
         if self._recording:
             raise RuntimeError("recorder already started")
 
-        mic_source, system_source = self._source_factory()
-        self._sources = {"mic": mic_source, "system": system_source}
+        mic_source, system_part = self._source_factory()
+        if isinstance(system_part, (list, tuple)):
+            systems = list(system_part)
+        else:
+            systems = [system_part]
+        if not systems:
+            raise AudioDeviceError("source factory returned no system source")
 
-        # Open both devices up front so a missing/failing device fails loudly
-        # before we claim to be recording (spec 5: audio failures stop loudly).
+        self._sources = {"mic": mic_source, "system": systems[0]}
+        extra_sources = {
+            f"system{i + 2}": src for i, src in enumerate(systems[1:])
+        }
+
+        # Open the required devices up front so a missing/failing device fails
+        # loudly before we claim to be recording (spec 5).
         opened: list[str] = []
         try:
             for ch in ("system", "mic"):
@@ -188,13 +215,20 @@ class AudioRecorder:
             self._sources = {}
             raise
 
+        # Extra loopback devices are best-effort: an open failure just drops
+        # that device (the default system channel is already guaranteed).
+        for ch, src in extra_sources.items():
+            try:
+                src.open()
+            except Exception:  # noqa: BLE001 - extras must never block recording
+                _safe_close(src)
+                continue
+            self._sources[ch] = src
+
         # Create streaming FLAC writers at each device's native rate/channels.
         try:
-            for ch, path in (
-                ("mic", self._mic_path),
-                ("system", self._system_path),
-            ):
-                src = self._sources[ch]
+            for ch, src in self._sources.items():
+                path = self._channel_path(ch)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 self._files[ch] = sf.SoundFile(
                     str(path),
@@ -218,7 +252,7 @@ class AudioRecorder:
         self._start_wall = time.time()
         self._recording = True
 
-        for ch in ("mic", "system"):
+        for ch in self._sources:
             t = threading.Thread(
                 target=self._run_channel,
                 args=(ch,),
@@ -227,6 +261,17 @@ class AudioRecorder:
             )
             self._threads.append(t)
             t.start()
+
+    def _channel_path(self, ch: str) -> Path:
+        if ch == "mic":
+            return self._mic_path
+        if ch == "system":
+            return self._system_path
+        # "system2" -> "<system stem>-2.flac" next to the primary system file.
+        n = ch.removeprefix("system")
+        return self._system_path.with_name(
+            f"{self._system_path.stem}-{n}{self._system_path.suffix}"
+        )
 
     def stop(self) -> RecordingResult:
         """Signal both threads to stop, join, close everything, return result."""
@@ -251,9 +296,16 @@ class AudioRecorder:
 
         mic = self._results.get("mic") or _empty_result("mic", self._sources)
         system = self._results.get("system") or _empty_result("system", self._sources)
+        extras = tuple(
+            self._results.get(ch) or _empty_result(ch, self._sources)
+            for ch in sorted(self._sources)
+            if ch not in ("mic", "system")
+        )
         self._sources = {}
         self._files = {}
-        return RecordingResult(mic=mic, system=system, duration_s=duration)
+        return RecordingResult(
+            mic=mic, system=system, duration_s=duration, extras=extras
+        )
 
     # -------------------------------------------------------------- internals
 
@@ -443,8 +495,16 @@ class _PyAudioSource:
             self._pa = None
 
 
-def _default_source_factory() -> tuple[StreamSource, StreamSource]:
-    """Production factory: (mic default input, system WASAPI loopback)."""
+def _default_source_factory() -> tuple[StreamSource, list[StreamSource]]:
+    """Production factory: (default mic, [ALL WASAPI loopback devices]).
+
+    The default output's loopback comes first (the required ``system``
+    channel). Every other render device's loopback is added best-effort,
+    because meeting apps route call audio to the default *communications*
+    device — frequently a different device than the default media output. The
+    pipeline picks the loudest system file at transcription time.
+    """
+    import pyaudiowpatch as pyaudio
 
     def resolve_loopback(pa: object) -> dict:
         return pa.get_default_wasapi_loopback()  # type: ignore[attr-defined]
@@ -452,6 +512,33 @@ def _default_source_factory() -> tuple[StreamSource, StreamSource]:
     def resolve_mic(pa: object) -> dict:
         return pa.get_default_input_device_info()  # type: ignore[attr-defined]
 
+    def resolve_by_name(name: str) -> Callable[[object], dict]:
+        def resolve(pa: object) -> dict:
+            for info in pa.get_loopback_device_info_generator():  # type: ignore[attr-defined]
+                if info.get("name") == name:
+                    return info
+            raise OSError(f"loopback device {name!r} disappeared")
+
+        return resolve
+
     mic = _PyAudioSource(resolve_mic, max_channels=2)
-    system = _PyAudioSource(resolve_loopback)
-    return mic, system
+    systems: list[StreamSource] = [_PyAudioSource(resolve_loopback)]
+
+    # Enumerate the other loopback devices (names resolved fresh at open()
+    # so re-opens survive device-index churn after sleep/unplug).
+    try:
+        with pyaudio.PyAudio() as pa:
+            default_name = str(pa.get_default_wasapi_loopback().get("name") or "")
+            seen = {default_name}
+            for info in pa.get_loopback_device_info_generator():
+                name = str(info.get("name") or "")
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                systems.append(_PyAudioSource(resolve_by_name(name)))
+                if len(systems) >= _MAX_SYSTEM_SOURCES:
+                    break
+    except Exception:  # noqa: BLE001 - enumeration failure -> default only
+        pass
+
+    return mic, systems

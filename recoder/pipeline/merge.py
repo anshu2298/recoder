@@ -165,12 +165,16 @@ def merge_channels(
     timing_index_path: Path,
     mic_flac: Path,
     system_flac: Path,
+    *,
+    system_channel: str = "system",
 ) -> list[Segment]:
     """Align both channels onto one meeting-relative timeline.
 
     Mic segments are labelled "Me"; system diarized speaker ints become
-    SPEAKER_1..n in order of first appearance (by time). Returns segments
-    sorted by start time.
+    SPEAKER_1..n in order of first appearance (by time). ``system_channel``
+    names the timing-index channel for ``system_flac`` (e.g. ``system2`` when
+    the pipeline chose an alternate loopback capture). Returns segments sorted
+    by start time.
     """
     by_channel = _read_timing_index(Path(timing_index_path))
 
@@ -178,7 +182,7 @@ def merge_channels(
         by_channel.get("mic", []), _sample_rate(Path(mic_flac))
     )
     system_map = _build_channel_map(
-        by_channel.get("system", []), _sample_rate(Path(system_flac))
+        by_channel.get(system_channel, []), _sample_rate(Path(system_flac))
     )
 
     # Meeting t=0 is the earlier of the two channel starts.

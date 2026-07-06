@@ -241,7 +241,12 @@ class RecordingManager:
             "frames_saved": frames_saved,
             "levels": {
                 "mic": levels.get("mic", 0.0),
-                "system": levels.get("system", 0.0),
+                # Loudest of ALL system loopback captures: the call may be
+                # playing to a non-default device recorded as system2/3/..
+                "system": max(
+                    (v for k, v in levels.items() if k.startswith("system")),
+                    default=0.0,
+                ),
             },
             "processing": self._processing_list(),
             "last_error": last_error,

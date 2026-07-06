@@ -156,12 +156,13 @@ def _stage_diarize(
     meeting: Meeting, config, transcriber: Transcriber | None
 ) -> MeetingState:
     tr = _get_transcriber(transcriber, config)
+    system_flac, system_channel = _pick_system_audio(meeting)
     system_segments = tr.transcribe(
-        meeting.audio_system,
+        system_flac,
         diarize=True,
         raw_dump_path=meeting.folder / "gladia-system.json",
     )
-    _log(meeting, f"diarize: system -> {len(system_segments)} segments")
+    _log(meeting, f"diarize: system ({system_channel}) -> {len(system_segments)} segments")
 
     sidecar = _mic_sidecar(meeting)
     if sidecar.exists():
@@ -183,7 +184,8 @@ def _stage_diarize(
         system_segments,
         meeting.timing_index,
         meeting.audio_mic,
-        meeting.audio_system,
+        system_flac,
+        system_channel=system_channel,
     )
     write_transcript(
         merged,
@@ -228,6 +230,62 @@ def _get_transcriber(transcriber: Transcriber | None, config) -> Transcriber:
     if transcriber is not None:
         return transcriber
     return GladiaTranscriber(config)
+
+
+def _pick_system_audio(meeting: Meeting) -> tuple[Path, str]:
+    """Choose the loudest system capture: ``(flac_path, timing_channel)``.
+
+    Multiple loopback devices may have been recorded (``audio-system.flac``
+    plus ``audio-system-N.flac``); the call's audio lives on whichever device
+    the meeting app actually played to. Highest RMS energy wins. With a single
+    candidate (or on any error) the primary file is used unchanged.
+    """
+    primary = meeting.audio_system
+    candidates: list[tuple[Path, str]] = [(primary, "system")]
+    pattern = f"{primary.stem}-*{primary.suffix}"
+    for path in sorted(primary.parent.glob(pattern)):
+        suffix_n = path.stem[len(primary.stem) + 1 :]
+        if suffix_n.isdigit():
+            candidates.append((path, f"system{suffix_n}"))
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    best = candidates[0]
+    best_rms = -1.0
+    report: list[str] = []
+    for path, channel in candidates:
+        try:
+            rms = _rms_energy(path)
+        except Exception as exc:  # noqa: BLE001 - unreadable candidate -> skip
+            _log(meeting, f"diarize: {path.name} unreadable ({exc}); skipped")
+            continue
+        report.append(f"{path.name}={rms:.5f}")
+        if rms > best_rms:
+            best = (path, channel)
+            best_rms = rms
+    _log(meeting, f"diarize: system candidates rms {', '.join(report)} -> {best[0].name}")
+    return best
+
+
+def _rms_energy(path: Path) -> float:
+    """RMS of a FLAC file, streamed in blocks (never loads it whole)."""
+    import numpy as np
+    import soundfile as sf
+
+    acc_sq = 0.0
+    acc_n = 0
+    with sf.SoundFile(str(path)) as fh:
+        while True:
+            block = fh.read(1_048_576, dtype="float32", always_2d=True)
+            if len(block) == 0:
+                break
+            flat = np.asarray(block).reshape(-1)
+            acc_sq += float(np.dot(flat, flat))
+            acc_n += flat.size
+    if acc_n == 0:
+        return 0.0
+    return float(np.sqrt(acc_sq / acc_n))
 
 
 def _mic_sidecar(meeting: Meeting) -> Path:

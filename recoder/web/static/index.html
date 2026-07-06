@@ -151,6 +151,11 @@
         <div class="level-row">sys <div class="bar"><span id="lvl-system"></span></div></div>
       </div>
       <div id="rec-error" class="banner" style="display:none"></div>
+      <div id="sys-warn" class="banner" style="display:none">
+        No system audio detected yet. If other people are speaking but the
+        sys meter stays at 0, the call is playing through a device Recoder
+        isn't hearing &mdash; check your Windows output device.
+      </div>
     </div>
   </section>
 
@@ -222,8 +227,13 @@ function fmtElapsed(s) {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+let sysHeard = false;
 function renderRecord(st) {
+  if (!recording && st.recording) sysHeard = false;  // new recording starts fresh
   recording = st.recording;
+  if (recording && (st.levels.system || 0) > 0.002) sysHeard = true;
+  $("sys-warn").style.display =
+    recording && !sysHeard && (st.elapsed_s || 0) > 90 ? "block" : "none";
   const btn = $("rec-btn");
   btn.textContent = recording ? "Stop" : "Start";
   btn.classList.toggle("live", recording);

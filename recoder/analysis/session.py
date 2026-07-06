@@ -251,14 +251,21 @@ def _run_with_retries(
 
 
 def _extract_summary(text: str) -> str:
-    """Slice from the first '# Meeting Summary' header to the end.
+    """Slice out the first complete '# Meeting Summary' document.
 
-    Drops any preamble/reasoning the model emitted before the document.
+    Drops any preamble/reasoning before the header. The SDK's final
+    ResultMessage repeats the last assistant text, so the document often
+    appears twice in the collected output — truncate at a repeated header.
     """
-    idx = text.find("# Meeting Summary")
+    marker = "# Meeting Summary"
+    idx = text.find(marker)
     if idx == -1:
         return text.strip()
-    return text[idx:].strip()
+    doc = text[idx:]
+    repeat = doc.find(marker, len(marker))
+    if repeat != -1:
+        doc = doc[:repeat]
+    return doc.strip()
 
 
 def _missing_sections(summary: str) -> list[str]:

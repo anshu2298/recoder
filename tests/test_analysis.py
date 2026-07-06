@@ -205,6 +205,19 @@ def test_analyze_happy_path_writes_summary(tmp_path: Path, cfg: Config) -> None:
     assert len(runner.calls) == 1
 
 
+def test_analyze_dedupes_repeated_document(tmp_path: Path, cfg: Config) -> None:
+    # The SDK ResultMessage repeats the final assistant text, so the document
+    # arrives twice; only one copy may land in summary.md.
+    folder = _make_meeting(tmp_path)
+    runner = FakeRunner([FULL_SUMMARY + "\n" + FULL_SUMMARY])
+
+    analyze(folder, cfg, session_runner=runner, sleep=_no_sleep)
+
+    text = (folder / "summary.md").read_text(encoding="utf-8")
+    assert text.count("# Meeting Summary") == 1
+    assert text.count("## Speakers") == 1
+
+
 def test_analyze_strips_preamble_before_document(tmp_path: Path, cfg: Config) -> None:
     folder = _make_meeting(tmp_path)
     runner = FakeRunner(["Sure, here is the summary:\n\n" + FULL_SUMMARY])

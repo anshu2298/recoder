@@ -20,13 +20,19 @@ from recoder.store import MeetingState, MeetingStore
 # --------------------------------------------------------------------------
 
 
-def _write_flac(path: Path, samplerate: int = 16000, seconds: float = 3.0) -> None:
-    sf.write(
-        str(path),
-        np.zeros(int(samplerate * seconds), dtype="float32"),
-        samplerate,
-        format="FLAC",
-    )
+def _write_flac(
+    path: Path,
+    samplerate: int = 16000,
+    seconds: float = 3.0,
+    amplitude: float = 0.0,
+) -> None:
+    n = int(samplerate * seconds)
+    if amplitude > 0.0:
+        t = np.arange(n, dtype="float32") / samplerate
+        data = (amplitude * np.sin(2 * np.pi * 440.0 * t)).astype("float32")
+    else:
+        data = np.zeros(n, dtype="float32")
+    sf.write(str(path), data, samplerate, format="FLAC")
 
 
 def _make_recorded_meeting(cfg: Config):
@@ -103,6 +109,47 @@ def stub_analysis(monkeypatch: pytest.MonkeyPatch) -> dict:
 # --------------------------------------------------------------------------
 # Happy path
 # --------------------------------------------------------------------------
+
+
+def test_diarize_picks_loudest_system_capture(cfg: Config, stub_analysis: dict) -> None:
+    # Primary system file is silence (wrong device); system-2 carries the call.
+    m = _make_recorded_meeting(cfg)
+    loud = m.audio_system.with_name("audio-system-2.flac")
+    _write_flac(loud, amplitude=0.4)
+    m.timing_index.write_text(
+        m.timing_index.read_text(encoding="utf-8")
+        + "\n".join(
+            json.dumps(e)
+            for e in [
+                {"ch": "system2", "event": "start", "wall": 100.0},
+                {"ch": "system2", "frames_written": 16000, "wall": 101.0},
+                {"ch": "system2", "frames_written": 32000, "wall": 102.0},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tr = FakeTranscriber()
+
+    result = run_pipeline(m.folder, cfg, transcriber=tr)
+
+    assert result.state == MeetingState.committed
+    # The diarized call went to the loud alternate capture, not the silent primary.
+    diarized_files = [name for name, diarize in tr.calls if diarize]
+    assert diarized_files == ["audio-system-2.flac"]
+    log = m.pipeline_log.read_text(encoding="utf-8")
+    assert "-> audio-system-2.flac" in log
+
+
+def test_diarize_single_system_file_skips_energy_scan(cfg: Config, stub_analysis: dict) -> None:
+    m = _make_recorded_meeting(cfg)
+    tr = FakeTranscriber()
+
+    run_pipeline(m.folder, cfg, transcriber=tr)
+
+    diarized_files = [name for name, diarize in tr.calls if diarize]
+    assert diarized_files == ["audio-system.flac"]
+    assert "candidates rms" not in m.pipeline_log.read_text(encoding="utf-8")
 
 
 def test_full_happy_path(cfg: Config, stub_analysis: dict) -> None:

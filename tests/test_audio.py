@@ -323,3 +323,75 @@ def test_mic_missing_raises_audio_device_error(tmp_path: Path) -> None:
 
 def test_fake_source_satisfies_protocol() -> None:
     assert isinstance(FakeSource(), StreamSource)
+
+
+# --------------------------------------------------------------------------
+# multiple system loopback devices
+# --------------------------------------------------------------------------
+
+
+def make_multi_recorder(
+    tmp_path: Path, mic: FakeSource, systems: list[FakeSource], **kw
+) -> AudioRecorder:
+    return AudioRecorder(
+        tmp_path / "audio-mic.flac",
+        tmp_path / "audio-system.flac",
+        tmp_path / "timing.jsonl",
+        source_factory=lambda: (mic, systems),
+        chunk_frames=kw.pop("chunk_frames", 256),
+        flush_interval_s=kw.pop("flush_interval_s", 0.1),
+        reopen_delays=kw.pop("reopen_delays", (0.02,)),
+        **kw,
+    )
+
+
+def test_multi_system_records_extra_files(tmp_path: Path) -> None:
+    mic = FakeSource(rate=8000, channels=1)
+    systems = [FakeSource(rate=8000, channels=1), FakeSource(rate=8000, channels=2)]
+    rec = make_multi_recorder(tmp_path, mic, systems)
+
+    rec.start()
+    time.sleep(0.4)
+    result = rec.stop()
+
+    assert (tmp_path / "audio-system.flac").exists()
+    assert (tmp_path / "audio-system-2.flac").exists()
+    data2, sr2 = sf.read(str(tmp_path / "audio-system-2.flac"))
+    assert sr2 == 8000 and data2.shape[1] == 2
+    assert len(result.extras) == 1
+    assert result.extras[0].channel == "system2"
+    assert result.extras[0].frames_written == len(data2)
+    # timing index carries the extra channel
+    channels = {e["ch"] for e in read_index(tmp_path)}
+    assert channels == {"mic", "system", "system2"}
+
+
+def test_extra_system_open_failure_dropped_silently(tmp_path: Path) -> None:
+    mic = FakeSource(rate=8000, channels=1)
+    systems = [
+        FakeSource(rate=8000, channels=1),
+        FakeSource(rate=8000, channels=1, open_fail=True),
+    ]
+    rec = make_multi_recorder(tmp_path, mic, systems)
+
+    rec.start()  # must NOT raise: only the default system device is required
+    time.sleep(0.3)
+    result = rec.stop()
+
+    assert result.mic.frames_written > 0
+    assert result.system.frames_written > 0
+    assert result.extras == ()
+    assert not (tmp_path / "audio-system-2.flac").exists()
+
+
+def test_single_source_factory_still_supported(tmp_path: Path) -> None:
+    # The legacy (mic, system) two-source contract keeps working.
+    mic = FakeSource(rate=8000, channels=1)
+    system = FakeSource(rate=8000, channels=1)
+    rec = make_recorder(tmp_path, mic, system)
+
+    rec.start()
+    time.sleep(0.3)
+    result = rec.stop()
+    assert result.extras == ()
+    assert result.system.frames_written > 0

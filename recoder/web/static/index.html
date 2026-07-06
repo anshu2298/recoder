@@ -94,7 +94,8 @@
   button.action:hover { filter: brightness(1.08); }
 
   /* archive */
-  .archive-layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; }
+  .archive-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; }
+  .detail { min-width: 0; }
   .mtg-list { display: flex; flex-direction: column; gap: 6px; }
   .mtg-item {
     text-align: left; background: var(--panel); border: 1px solid var(--line);
@@ -116,8 +117,9 @@
   table.ai tr:last-child td { border-bottom: none; }
   table.ai td.owner { color: var(--accent); white-space: nowrap; }
   table.ai td.due { color: var(--warn); white-space: nowrap; }
-  .frames-strip { display: flex; gap: 8px; overflow-x: auto; padding: 6px 0 12px; }
-  .frames-strip img { height: 88px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+  .frames-strip { display: none; gap: 8px; overflow-x: auto; max-width: 100%; padding: 6px 0 12px; }
+  .frames-strip.open { display: flex; }
+  .frames-strip img { height: 88px; flex-shrink: 0; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
   .toggle-row { display: flex; gap: 10px; align-items: center; margin: 16px 0 8px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   @media (max-width: 720px) { .archive-layout { grid-template-columns: 1fr; } }
@@ -296,23 +298,34 @@ async function openMeeting(folder) {
   loadMeetings();
   const d = await jget(`/api/meetings/${encodeURIComponent(folder)}`);
   const meta = d.meta || {};
-  const framesHtml = (d.frames || []).map((f) =>
-    `<img loading="lazy" src="/api/meetings/${encodeURIComponent(folder)}/frames/${encodeURIComponent(f)}" onclick="window.open(this.src)" />`).join("");
+  const frames = d.frames || [];
   $("detail").innerHTML = `
     <h2>${escapeHtml(meta.title || folder)}</h2>
     <div class="meta-line">${folder} · ${meta.state || ""}${meta.context_note ? " · " + escapeHtml(meta.context_note) : ""}</div>
     <div class="toggle-row">
       <button class="action ghost" onclick="reprocess('${folder}')">Reprocess</button>
       ${d.transcript ? `<button class="action ghost" onclick="toggleTranscript()">Toggle transcript</button>` : ""}
+      ${frames.length ? `<button class="action ghost" onclick="toggleFrames('${folder}')">Frames (${frames.length})</button>` : ""}
     </div>
     ${renderActionItems(d.action_items)}
-    ${framesHtml ? `<div class="frames-strip">${framesHtml}</div>` : ""}
+    ${frames.length ? `<div class="frames-strip" id="frames-strip" data-frames='${JSON.stringify(frames)}'></div>` : ""}
     <h3>Summary</h3>
     <pre class="doc">${d.summary ? escapeHtml(d.summary) : "No summary yet."}</pre>
     <div id="transcript-box" style="display:none">
       <h3>Transcript</h3>
       <pre class="doc">${d.transcript ? escapeHtml(d.transcript) : ""}</pre>
     </div>`;
+}
+function toggleFrames(folder) {
+  const strip = $("frames-strip");
+  if (!strip) return;
+  if (!strip.childElementCount) {
+    // Images are for the analyst, not the user: only fetch them on demand.
+    const frames = JSON.parse(strip.dataset.frames || "[]");
+    strip.innerHTML = frames.map((f) =>
+      `<img loading="lazy" src="/api/meetings/${encodeURIComponent(folder)}/frames/${encodeURIComponent(f)}" onclick="window.open(this.src)" />`).join("");
+  }
+  strip.classList.toggle("open");
 }
 function renderActionItems(items) {
   if (!items || !items.length) return "";

@@ -55,6 +55,11 @@ _MAX_SYSTEM_SOURCES = 4
 _DEFAULT_FLUSH_INTERVAL_S = 1.0
 # Re-open backoff schedule; the last value repeats until success or stop.
 _DEFAULT_REOPEN_DELAYS: tuple[float, ...] = (0.5, 1.0, 2.0, 5.0)
+# stop(): how long to wait for channel threads before force-closing their
+# sources (which aborts a read blocked on a silent device), then how long to
+# wait after that nudge before abandoning the thread (it is a daemon).
+_DEFAULT_STOP_JOIN_TIMEOUT_S = 10.0
+_STOP_NUDGE_TIMEOUT_S = 2.0
 
 
 class AudioDeviceError(RuntimeError):
@@ -152,6 +157,7 @@ class AudioRecorder:
         chunk_frames: int = _DEFAULT_CHUNK_FRAMES,
         flush_interval_s: float = _DEFAULT_FLUSH_INTERVAL_S,
         reopen_delays: Sequence[float] = _DEFAULT_REOPEN_DELAYS,
+        stop_join_timeout_s: float = _DEFAULT_STOP_JOIN_TIMEOUT_S,
     ) -> None:
         self._mic_path = Path(mic_path)
         self._system_path = Path(system_path)
@@ -161,13 +167,14 @@ class AudioRecorder:
         self._chunk_frames = int(chunk_frames)
         self._flush_interval_s = float(flush_interval_s)
         self._reopen_delays = tuple(reopen_delays) or _DEFAULT_REOPEN_DELAYS
+        self._stop_join_timeout_s = float(stop_join_timeout_s)
 
         self._stop_event = threading.Event()
         self._index_lock = threading.Lock()
         self._recording = False
 
         self._index_fh = None
-        self._threads: list[threading.Thread] = []
+        self._threads: list[tuple[str, threading.Thread]] = []
         self._sources: dict[str, StreamSource] = {}
         self._files: dict[str, sf.SoundFile] = {}
         self._results: dict[str, ChannelResult] = {}
@@ -259,7 +266,7 @@ class AudioRecorder:
                 name=f"audio-{ch}",
                 daemon=True,
             )
-            self._threads.append(t)
+            self._threads.append((ch, t))
             t.start()
 
     def _channel_path(self, ch: str) -> Path:
@@ -274,22 +281,46 @@ class AudioRecorder:
         )
 
     def stop(self) -> RecordingResult:
-        """Signal both threads to stop, join, close everything, return result."""
+        """Signal all threads to stop, join, close everything, return result.
+
+        Joins are bounded: a WASAPI loopback read blocks while its device is
+        silent, so a channel thread can be stuck inside ``source.read()`` at
+        stop time. After the timeout every source is closed (aborting blocked
+        reads); a thread that still won't exit is abandoned (it is a daemon,
+        and its FLAC was flushed within the last second).
+        """
         if not self._recording:
             raise RuntimeError("recorder not started")
 
         self._stop_event.set()
-        for t in self._threads:
-            t.join()
+        deadline = time.monotonic() + self._stop_join_timeout_s
+        for _ch, t in self._threads:
+            t.join(max(0.05, deadline - time.monotonic()))
+        if any(t.is_alive() for _ch, t in self._threads):
+            # Nudge: closing the source makes the blocked read raise; the
+            # thread then sees the stop flag in its gap path and exits.
+            for src in self._sources.values():
+                _safe_close(src)
+            for _ch, t in self._threads:
+                if t.is_alive():
+                    t.join(_STOP_NUDGE_TIMEOUT_S)
+        stuck_channels = {ch for ch, t in self._threads if t.is_alive()}
+        for ch in sorted(stuck_channels):
+            self._emit(ch, event="stuck")
         self._threads = []
 
         for src in self._sources.values():
             _safe_close(src)
-        for f in self._files.values():
-            _safe_close(f)
-        if self._index_fh is not None:
-            _safe_close(self._index_fh)
-            self._index_fh = None
+        for ch, f in self._files.items():
+            # A stuck thread may still hold its SoundFile; closing it from
+            # here could crash the writer. Leak it instead — the recording
+            # was flushed at least once a second.
+            if ch not in stuck_channels:
+                _safe_close(f)
+        with self._index_lock:
+            if self._index_fh is not None:
+                _safe_close(self._index_fh)
+                self._index_fh = None
 
         self._recording = False
         duration = time.time() - self._start_wall
@@ -479,7 +510,19 @@ class _PyAudioSource:
     def read(self, frames: int) -> np.ndarray:
         if self._stream is None:
             raise RuntimeError("stream not open")
-        data = self._stream.read(frames, exception_on_overflow=False)
+        # A WASAPI loopback stream delivers NO frames while its device is
+        # silent, so a blocking read could park this thread indefinitely and
+        # hang stop(). Poll availability and return an empty block instead,
+        # letting the recorder loop re-check its stop flag between waits.
+        avail = self._stream.get_read_available()
+        if avail <= 0:
+            time.sleep(0.02)
+            avail = self._stream.get_read_available()
+            if avail <= 0:
+                return np.empty((0, self._channels), dtype=np.float32)
+        data = self._stream.read(
+            min(frames, avail), exception_on_overflow=False
+        )
         arr = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
         return arr.reshape(-1, self._channels)
 

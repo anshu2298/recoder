@@ -384,6 +384,61 @@ def test_extra_system_open_failure_dropped_silently(tmp_path: Path) -> None:
     assert not (tmp_path / "audio-system-2.flac").exists()
 
 
+class BlockingSource(FakeSource):
+    """A source whose read() blocks until close(), like a silent WASAPI
+    loopback device that delivers no frames while nothing is playing."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(realtime=False, **kw)
+        self._closed = threading.Event()
+
+    def read(self, frames: int) -> np.ndarray:
+        self._closed.wait()
+        raise OSError("stream aborted by close")
+
+    def open(self) -> None:
+        if self._closed.is_set():
+            raise OSError("device gone")
+        super().open()
+
+    def close(self) -> None:
+        self._closed.set()
+        super().close()
+
+
+def test_stop_returns_despite_source_blocked_in_read(tmp_path: Path) -> None:
+    # Regression: a loopback device with nothing playing blocks read()
+    # forever; stop() must not hang on its channel thread (real meeting
+    # 2026-07-06-1429 hung exactly this way and had to be force-killed).
+    mic = FakeSource(rate=8000, channels=1)
+    systems: list[FakeSource] = [
+        FakeSource(rate=8000, channels=1),
+        BlockingSource(rate=8000, channels=1),
+    ]
+    rec = make_multi_recorder(
+        tmp_path, mic, systems, stop_join_timeout_s=0.3
+    )
+
+    rec.start()
+    time.sleep(0.3)
+    t0 = time.monotonic()
+    result = rec.stop()
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 5.0, f"stop() took {elapsed:.1f}s"
+    assert not rec.is_recording
+    # The healthy channels survived intact and are readable.
+    assert result.mic.frames_written > 0
+    assert result.system.frames_written > 0
+    sf.read(str(tmp_path / "audio-mic.flac"))
+    sf.read(str(tmp_path / "audio-system.flac"))
+    # Recording can start again after a blocked stop.
+    mic2 = FakeSource(rate=8000, channels=1)
+    rec2 = make_recorder(tmp_path, mic2, FakeSource(rate=8000, channels=1))
+    rec2.start()
+    rec2.stop()
+
+
 def test_single_source_factory_still_supported(tmp_path: Path) -> None:
     # The legacy (mic, system) two-source contract keeps working.
     mic = FakeSource(rate=8000, channels=1)

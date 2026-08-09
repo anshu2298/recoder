@@ -26,6 +26,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from recoder.pipeline import lock as pipeline_lock
 from recoder.pipeline.merge import merge_channels, write_transcript
 from recoder.pipeline.transcribe import (
     GladiaTranscriber,
@@ -75,45 +76,56 @@ def run_pipeline(
     store = MeetingStore(config)
     meeting = store.load(meeting_folder)
 
-    # Resume: rewind error -> the state it failed from so next_pending_stage
-    # points back at the failed stage.
-    if meeting.state == MeetingState.error:
-        prev = meeting.read_meta().get("prev_state")
-        if prev is None:
-            raise PipelineError(
-                f"meeting {meeting.folder.name} is in error with no recorded "
-                "predecessor state; cannot resume"
+    # One live runner per meeting: the startup sweep, the UI's Retry button
+    # and the detached `recoder process` child must never race. A stale lock
+    # (dead owner) is reclaimed inside acquire(); a live one is a hard stop.
+    try:
+        pipeline_lock.acquire(meeting.folder)
+    except pipeline_lock.LockHeld as exc:
+        raise PipelineError(str(exc)) from exc
+
+    try:
+        # Resume: rewind error -> the state it failed from so next_pending_stage
+        # points back at the failed stage.
+        if meeting.state == MeetingState.error:
+            prev = meeting.read_meta().get("prev_state")
+            if prev is None:
+                raise PipelineError(
+                    f"meeting {meeting.folder.name} is in error with no recorded "
+                    "predecessor state; cannot resume"
+                )
+            _log(meeting, f"resuming from error at stage-before-state {prev}")
+            meeting.advance(prev)
+
+        while True:
+            stage = store.next_pending_stage(meeting)
+            if stage is None:
+                break
+
+            _log(meeting, f"stage {stage}: start")
+            t0 = time.monotonic()
+            try:
+                result_state = _run_stage(stage, meeting, config, transcriber)
+            except Exception as exc:  # noqa: BLE001 - park + re-raise as PipelineError
+                message = str(exc)
+                _log(meeting, f"stage {stage}: FAILED - {message}")
+                meeting.set_error(stage, message)
+                if isinstance(exc, PipelineError):
+                    raise
+                raise PipelineError(f"stage {stage} failed: {message}") from exc
+
+            duration = time.monotonic() - t0
+            meeting.record_stage(stage, duration)
+            meeting.advance(result_state)
+            _log(
+                meeting,
+                f"stage {stage}: done in {duration:.1f}s -> {result_state.value}",
             )
-        _log(meeting, f"resuming from error at stage-before-state {prev}")
-        meeting.advance(prev)
 
-    while True:
-        stage = store.next_pending_stage(meeting)
-        if stage is None:
-            break
-
-        _log(meeting, f"stage {stage}: start")
-        t0 = time.monotonic()
-        try:
-            result_state = _run_stage(stage, meeting, config, transcriber)
-        except Exception as exc:  # noqa: BLE001 - park + re-raise as PipelineError
-            message = str(exc)
-            _log(meeting, f"stage {stage}: FAILED - {message}")
-            meeting.set_error(stage, message)
-            if isinstance(exc, PipelineError):
-                raise
-            raise PipelineError(f"stage {stage} failed: {message}") from exc
-
-        duration = time.monotonic() - t0
-        meeting.record_stage(stage, duration)
-        meeting.advance(result_state)
-        _log(
-            meeting,
-            f"stage {stage}: done in {duration:.1f}s -> {result_state.value}",
-        )
-
-    _log(meeting, f"pipeline complete at state {meeting.state.value}")
-    return meeting
+        _log(meeting, f"pipeline complete at state {meeting.state.value}")
+        return meeting
+    finally:
+        pipeline_lock.release(meeting.folder)
 
 
 # --------------------------------------------------------------------------
@@ -141,29 +153,59 @@ def _run_stage(
 def _stage_transcribe(
     meeting: Meeting, config, transcriber: Transcriber | None
 ) -> MeetingState:
+    """Transcribe BOTH channels concurrently (mic plain, system diarized).
+
+    The two Gladia jobs are independent, so serializing them (the original
+    design: mic here, system in the diarize stage) doubled wall-clock for no
+    reason. Both run here on threads; each result is checkpointed to its own
+    sidecar the moment it lands, so a crash mid-stage re-spends at most one
+    channel. The diarize stage then reduces to a pure-local merge.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     tr = _get_transcriber(transcriber, config)
-    segments = tr.transcribe(
-        meeting.audio_mic,
-        diarize=False,
-        raw_dump_path=meeting.folder / "gladia-mic.json",
+    system_flac, system_channel = _pick_system_audio(meeting)
+
+    def _mic() -> int:
+        segments = tr.transcribe(
+            meeting.audio_mic,
+            diarize=False,
+            raw_dump_path=meeting.folder / "gladia-mic.json",
+        )
+        _dump_segments(segments, _mic_sidecar(meeting))
+        return len(segments)
+
+    def _system() -> int:
+        segments = tr.transcribe(
+            system_flac,
+            diarize=True,
+            raw_dump_path=meeting.folder / "gladia-system.json",
+        )
+        _dump_system_sidecar(segments, system_flac, system_channel, meeting)
+        return len(segments)
+
+    # Skip a channel whose sidecar already exists (resume after a crash that
+    # finished one side but not the other).
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        mic_future = (
+            None if _mic_sidecar(meeting).exists() else pool.submit(_mic)
+        )
+        sys_future = (
+            None if _system_sidecar(meeting).exists() else pool.submit(_system)
+        )
+        mic_n = mic_future.result() if mic_future else "cached"
+        sys_n = sys_future.result() if sys_future else "cached"
+    _log(
+        meeting,
+        f"transcribe: mic -> {mic_n} segments, "
+        f"system ({system_channel}) -> {sys_n} segments (concurrent)",
     )
-    _dump_segments(segments, _mic_sidecar(meeting))
-    _log(meeting, f"transcribe: mic -> {len(segments)} segments")
     return MeetingState.transcribed
 
 
 def _stage_diarize(
     meeting: Meeting, config, transcriber: Transcriber | None
 ) -> MeetingState:
-    tr = _get_transcriber(transcriber, config)
-    system_flac, system_channel = _pick_system_audio(meeting)
-    system_segments = tr.transcribe(
-        system_flac,
-        diarize=True,
-        raw_dump_path=meeting.folder / "gladia-system.json",
-    )
-    _log(meeting, f"diarize: system ({system_channel}) -> {len(system_segments)} segments")
-
     sidecar = _mic_sidecar(meeting)
     if sidecar.exists():
         mic_segments = _load_segments(sidecar)
@@ -171,6 +213,7 @@ def _stage_diarize(
     else:
         # Should not happen on a normal run (transcribe wrote it), but stay
         # resilient: re-transcribe rather than crash.
+        tr = _get_transcriber(transcriber, config)
         mic_segments = tr.transcribe(
             meeting.audio_mic,
             diarize=False,
@@ -178,6 +221,30 @@ def _stage_diarize(
         )
         _dump_segments(mic_segments, sidecar)
         _log(meeting, "diarize: mic sidecar missing, re-transcribed mic")
+
+    loaded = _load_system_sidecar(meeting)
+    if loaded is not None:
+        system_segments, system_flac, system_channel = loaded
+        _log(
+            meeting,
+            f"diarize: reused {len(system_segments)} cached system segments "
+            f"({system_channel})",
+        )
+    else:
+        # Meetings transcribed before the concurrent stage existed (or a
+        # deleted sidecar): fall back to the original in-stage system call.
+        tr = _get_transcriber(transcriber, config)
+        system_flac, system_channel = _pick_system_audio(meeting)
+        system_segments = tr.transcribe(
+            system_flac,
+            diarize=True,
+            raw_dump_path=meeting.folder / "gladia-system.json",
+        )
+        _log(
+            meeting,
+            f"diarize: system ({system_channel}) -> "
+            f"{len(system_segments)} segments",
+        )
 
     merged = merge_channels(
         mic_segments,
@@ -290,6 +357,63 @@ def _rms_energy(path: Path) -> float:
 
 def _mic_sidecar(meeting: Meeting) -> Path:
     return meeting.folder / "segments-mic.json"
+
+
+def _system_sidecar(meeting: Meeting) -> Path:
+    return meeting.folder / "segments-system.json"
+
+
+def _dump_system_sidecar(
+    segments: list[RawSegment],
+    system_flac: Path,
+    system_channel: str,
+    meeting: Meeting,
+) -> None:
+    """Checkpoint the diarized system segments plus which capture they came
+    from, so the merge stage never re-picks (or re-transcribes) the channel."""
+    payload = {
+        "flac": system_flac.name,
+        "channel": system_channel,
+        "segments": [
+            {
+                "speaker": s.speaker,
+                "start": s.start,
+                "end": s.end,
+                "text": s.text,
+                "language": s.language,
+            }
+            for s in segments
+        ],
+    }
+    with _system_sidecar(meeting).open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, ensure_ascii=False)
+
+
+def _load_system_sidecar(
+    meeting: Meeting,
+) -> tuple[list[RawSegment], Path, str] | None:
+    """Load the system sidecar -> (segments, flac_path, channel), or None."""
+    path = _system_sidecar(meeting)
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        flac = meeting.folder / data["flac"]
+        channel = data["channel"]
+        segments = [
+            RawSegment(
+                speaker=item.get("speaker"),
+                start=float(item.get("start", 0.0)),
+                end=float(item.get("end", 0.0)),
+                text=item.get("text") or "",
+                language=item.get("language"),
+            )
+            for item in data["segments"]
+        ]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not flac.exists():
+        return None
+    return segments, flac, channel
 
 
 def _dump_segments(segments: list[RawSegment], path: Path) -> None:

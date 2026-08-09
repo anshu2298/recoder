@@ -70,6 +70,9 @@ def run_desktop(config: Config) -> int:
 
     host = "127.0.0.1"
     manager = RecordingManager(config)
+    resumed = manager.resume_pending()
+    if resumed:
+        print(f"Resumed interrupted pipelines: {', '.join(resumed)}")
     server = uvicorn.Server(
         uvicorn.Config(
             create_app(config, manager=manager),

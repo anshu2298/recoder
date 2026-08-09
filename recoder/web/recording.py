@@ -60,9 +60,39 @@ def _default_snapshot_factory(frames_dir: Path, config: Config):
 
 
 def _default_pipeline_runner(folder: Path, config: Config):
-    from recoder.pipeline.runner import run_pipeline
+    """Run the pipeline in a DETACHED child process and wait on it.
 
-    return run_pipeline(folder, config)
+    The pipeline used to run on a daemon thread inside the app process, so
+    closing the window mid-processing killed it silently and stranded the
+    meeting in an intermediate state. A detached ``recoder process <folder>``
+    child survives the app's death; the calling thread merely waits so a
+    nonzero exit can be surfaced as ``last_error``. Double-runs are prevented
+    by the per-meeting ``pipeline.lock`` inside :func:`run_pipeline`.
+    """
+    import os
+    import subprocess
+    import sys
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    log_path = folder / "pipeline-run.log"
+    with log_path.open("ab") as log:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "recoder", "process", str(folder)],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    rc = proc.wait()
+    if rc != 0:
+        raise RuntimeError(
+            f"pipeline process exited with code {rc} (see {log_path.name})"
+        )
 
 
 class RecordingManager:
@@ -178,6 +208,64 @@ class RecordingManager:
         # Called from the audio capture threads; a plain dict assignment is
         # atomic enough for a status read.
         self._levels[channel] = float(rms)
+
+    # -- crash recovery ------------------------------------------------------
+
+    def resume_pending(self) -> list[str]:
+        """Auto-resume meetings interrupted by a crash or app close (R2).
+
+        Called once at app startup. Any meeting sitting in an intermediate
+        pipeline state with no *live* ``pipeline.lock`` was orphaned — its
+        runner died — so its pipeline is relaunched (checkpointed stages are
+        skipped by the runner; cached Gladia artifacts are reused).
+
+        Two states are deliberately excluded:
+          * ``error`` — a deterministic failure would just re-fail on every
+            launch; that stays behind the manual Retry button.
+          * ``recording`` with a live capture — that's *this* process's
+            in-flight meeting. A ``recording`` folder with no live capture is
+            a crashed recording: salvaged by advancing to ``recorded`` (the
+            audio written up to the crash is still valid) and processed.
+
+        Returns the folder names that were resumed.
+        """
+        from recoder.pipeline import lock as pipeline_lock
+
+        resumable = {
+            MeetingState.recorded,
+            MeetingState.transcribed,
+            MeetingState.diarized,
+            MeetingState.analyzed,
+        }
+        resumed: list[str] = []
+        for meeting in self.store.list_meetings():
+            try:
+                state = MeetingState(meeting.read_meta().get("state"))
+            except Exception:  # noqa: BLE001 - unreadable/unknown -> skip
+                continue
+
+            if state == MeetingState.recording:
+                with self._lock:
+                    is_ours = (
+                        self._recording
+                        and self._meeting is not None
+                        and self._meeting.folder == meeting.folder
+                    )
+                if is_ours or not meeting.audio_mic.exists():
+                    continue
+                try:
+                    meeting.advance(MeetingState.recorded)
+                except Exception:  # noqa: BLE001 - salvage is best-effort
+                    continue
+                state = MeetingState.recorded
+
+            if state not in resumable:
+                continue
+            if pipeline_lock.is_live(meeting.folder):
+                continue  # a detached child is already on it
+            self.start_pipeline(meeting.folder)
+            resumed.append(meeting.folder.name)
+        return resumed
 
     # -- pipeline hand-off --------------------------------------------------
 

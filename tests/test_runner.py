@@ -202,29 +202,35 @@ def test_transcribe_stage_advances_state_incrementally(
 # --------------------------------------------------------------------------
 
 
-def test_crash_in_diarize_then_resume(cfg: Config, stub_analysis: dict) -> None:
+def test_crash_in_transcribe_then_resume(
+    cfg: Config, stub_analysis: dict
+) -> None:
+    """System-channel failure now surfaces in the concurrent transcribe stage;
+    resume reuses the cached mic sidecar and re-spends only the system call."""
     m = _make_recorded_meeting(cfg)
     tr = FakeTranscriber(fail_system_first=True)
 
-    with pytest.raises(PipelineError, match="diarize"):
+    with pytest.raises(PipelineError, match="transcribe"):
         run_pipeline(m.folder, cfg, transcriber=tr)
 
     # parked in error, remembering the failed stage + predecessor
     assert m.state == MeetingState.error
     meta = m.read_meta()
-    assert meta["error"]["stage"] == "diarize"
-    assert meta["prev_state"] == MeetingState.transcribed.value
-    # mic already transcribed + cached
+    assert meta["error"]["stage"] == "transcribe"
+    assert meta["prev_state"] == MeetingState.recorded.value
+    # mic already transcribed + cached despite the stage failing
     assert tr.mic_calls == 1
     assert tr.system_calls == 1  # the failed attempt
     assert (m.folder / "segments-mic.json").exists()
 
-    # resume: transcribe is skipped (mic not re-transcribed), diarize retried
+    # resume: mic skipped via its sidecar, only the system channel retried
     result = run_pipeline(m.folder, cfg, transcriber=tr)
     assert result.state == MeetingState.committed
     assert tr.mic_calls == 1  # NOT re-called -> cached sidecar reused
     assert tr.system_calls == 2  # failed once, then succeeded
     assert m.transcript_json.exists()
+    # diarize consumed the system sidecar written on the retry
+    assert (m.folder / "segments-system.json").exists()
 
 
 # --------------------------------------------------------------------------

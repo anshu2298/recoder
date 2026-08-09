@@ -386,8 +386,20 @@ def ui(
 
     threading.Thread(target=_launch_window, daemon=True).start()
 
+    from recoder.web.recording import RecordingManager
+
+    manager = RecordingManager(config)
+    resumed = manager.resume_pending()
+    if resumed:
+        typer.echo(f"Resumed interrupted pipelines: {', '.join(resumed)}")
+
     typer.echo(f"Recoder UI on {url}  (Ctrl+C to stop)")
-    uvicorn.run(create_app(config), host=host, port=port, log_level="warning")
+    uvicorn.run(
+        create_app(config, manager=manager),
+        host=host,
+        port=port,
+        log_level="warning",
+    )
 
 
 if __name__ == "__main__":

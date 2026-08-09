@@ -87,6 +87,12 @@ class Config:
     #   the [consolidation_groups.<name>] tables in recoder.toml.
     consolidation_groups: dict = field(default_factory=dict)
 
+    # Named worktree register: a live, read-only rollup of the CCR stores of
+    # a family of worktrees, computed on demand (never written back). Shape:
+    #   {"<tree-name>": {"stores": [str, ...]}}. Loaded verbatim from the
+    #   [register_trees.<name>] tables in recoder.toml.
+    register_trees: dict = field(default_factory=dict)
+
     # --- Gladia hosted STT (default engine, spec §4.2 step 1) ----------------
     # API key resolves from env GLADIA_API_KEY, with a recoder.toml override.
     gladia_api_key: str | None = None
@@ -116,6 +122,7 @@ _SCALAR_KEYS = {
     "consolidation_archive_dir",
     "consolidation_state_path",
     "consolidation_groups",
+    "register_trees",
     "gladia_api_key",
     "gladia_base_url",
     "gladia_poll_interval_s",
@@ -149,7 +156,7 @@ def load_config(override_file: Path | None = None) -> Config:
             "consolidation_state_path",
         ):
             updates[key] = Path(value)
-        elif key == "consolidation_groups":
+        elif key in ("consolidation_groups", "register_trees"):
             # A TOML table of tables; keep it a plain dict (tolerate absence).
             updates[key] = dict(value) if isinstance(value, dict) else {}
         else:

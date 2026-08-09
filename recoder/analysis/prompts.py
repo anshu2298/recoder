@@ -134,6 +134,7 @@ def build_analysis_prompt(
     frame_inventory: list[dict],
     duration_s: float,
     mounted_projects: list[dict] | None = None,
+    register_md: str = "",
 ) -> str:
     """Build the full analysis prompt for one meeting.
 
@@ -148,6 +149,19 @@ def build_analysis_prompt(
     duration = _fmt_duration(duration_s)
     frame_table = render_frame_table(frame_inventory)
     mounts_block = render_mounted_projects(mounted_projects or [])
+
+    register_block = ""
+    if register_md.strip():
+        register_block = f"""
+### Worktree register (live rollup)
+The user's active project is split across several worktrees. This register is
+a machine-collated snapshot of EVERY tree's current focus, next step, and
+recent milestones — including trees NOT mounted above. Use it to place the
+discussion in the whole family's context (e.g. work discussed here may extend
+or conflict with another tree's focus). It is read-only derived state.
+
+{register_md.strip()}
+"""
 
     sections_list = "\n".join(f"  - {s}" for s in REQUIRED_SECTIONS)
 
@@ -194,7 +208,7 @@ existing work.
 
 ### Project memory available
 {mounts_block}
-
+{register_block}
 ## Required output
 Write ONE complete markdown document with EXACTLY these sections, in this order:
 {sections_list}

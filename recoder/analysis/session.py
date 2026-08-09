@@ -378,6 +378,22 @@ def analyze(
         {"slug": slug, "name": rp.name, "reason": rp.reason} for slug, rp in mounts
     ]
 
+    # Worktree register: when any routed store lives inside a registered
+    # family tree, inject the live cross-tree rollup so the analyst sees the
+    # whole family, not just the mounted stores. Computed on read; best-effort.
+    register_md = ""
+    try:
+        from recoder.analysis.register import (
+            build_register,
+            register_covers,
+            render_register_md,
+        )
+
+        if any(register_covers(config, rp.path) for _, rp in mounts):
+            register_md = render_register_md(build_register(config))
+    except Exception:  # noqa: BLE001 - the register must never sink analysis
+        register_md = ""
+
     transcript_md = render_transcript(segments)
     prompt = build_analysis_prompt(
         meta,
@@ -385,6 +401,7 @@ def analyze(
         frame_inventory,
         duration_s,
         mounted_projects=mounted_projects,
+        register_md=register_md,
     )
     options = _build_options(
         meeting_folder, config, ANALYZE_MAX_TURNS, mounts=mounts

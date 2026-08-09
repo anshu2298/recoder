@@ -38,3 +38,16 @@ gladia_api_key = "YOUR-GLADIA-API-KEY"
 #     "C:/work/myproject/feature-a",
 #     "C:/work/myproject-experiment/feature-b",
 # ]
+
+# --- Worktree register -----------------------------------------------------------
+# Live, read-only rollup of a family of worktrees' CCR stores. Computed on
+# demand (nothing is ever written): shown on the app home screen (GET
+# /api/register) and injected into meeting analysis whenever a routed store
+# lives inside one of these trees. List every store a tree accumulates
+# (typically the worktree root and its frontend/).
+#
+# [register_trees.feature-a]
+# stores = [
+#     "C:/work/myproject/feature-a",
+#     "C:/work/myproject/feature-a/frontend",
+# ]

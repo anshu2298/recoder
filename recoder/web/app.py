@@ -100,6 +100,33 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
     def status() -> dict:
         return manager.status()
 
+    @app.get("/api/register")
+    def register() -> dict:
+        """Live rollup of the configured worktree family (computed on read)."""
+        from recoder.analysis.register import build_register, render_register_md
+
+        trees = build_register(config)
+        return {
+            "markdown": render_register_md(trees),
+            "trees": [
+                {
+                    "name": t.name,
+                    "last_active": t.last_active,
+                    "stale_days": t.stale_days,
+                    "focus": t.current_focus,
+                    "next": t.next_step,
+                    "milestones": [
+                        {"ts": ts, "text": text} for ts, text in t.milestones
+                    ],
+                    "stores": [
+                        {"path": str(s.path), "exists": s.exists}
+                        for s in t.stores
+                    ],
+                }
+                for t in trees
+            ],
+        }
+
     # -- archive API --------------------------------------------------------
 
     @app.get("/api/meetings")

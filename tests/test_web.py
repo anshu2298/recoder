@@ -412,3 +412,11 @@ def test_meetings_list_marks_the_source(client, store):
     by_title = {m["title"]: m for m in client.get("/api/meetings").json()}
     assert by_title["Imported call"]["source"] == "fathom"
     assert by_title["Captured call"]["source"] == "capture"
+
+
+def test_processing_list_marks_imported_meetings(client, store):
+    """The stepper must not tick Captured/Transcribed for an ingested meeting."""
+    store.import_meeting("Imported call", source="fathom")
+    procs = {p["title"]: p for p in client.get("/api/status").json()["processing"]}
+    assert procs["Imported call"]["source"] == "fathom"
+    assert procs["Imported call"]["state"] == "diarized"

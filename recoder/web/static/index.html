@@ -1290,6 +1290,13 @@ function renderRecord(st) {
 const STAGES = ["recorded", "transcribed", "diarized", "analyzed", "committed"];
 const STAGE_LABEL = { recorded: "Captured", transcribed: "Transcribed",
                       diarized: "Diarized", analyzed: "Analyzed", committed: "Saved" };
+/* An ingested meeting enters the state machine at `diarized`, so the linear
+   stepper would tick "Captured" and "Transcribed" for stages that never ran —
+   claiming work we didn't do. It gets its own three-step track instead. */
+const STAGES_IMPORTED = ["diarized", "analyzed", "committed"];
+const STAGE_LABEL_IMPORTED = { diarized: "Imported", analyzed: "Analyzed",
+                               committed: "Saved" };
+const isImported = (m) => !!m.source && m.source !== "capture";
 
 function renderProcessing(st) {
   const items = (st && st.processing) || [];
@@ -1304,11 +1311,13 @@ function renderProcessing(st) {
   }
   wrap.innerHTML = items.map((m) => {
     const errored = m.state === "error";
-    const failedAt = errored ? STAGES.indexOf((m.error && m.error.at_state) || "") : -1;
-    const curIdx = errored ? (failedAt >= 0 ? failedAt + 1 : 0) : STAGES.indexOf(m.state);
+    const stages = isImported(m) ? STAGES_IMPORTED : STAGES;
+    const labels = isImported(m) ? STAGE_LABEL_IMPORTED : STAGE_LABEL;
+    const failedAt = errored ? stages.indexOf((m.error && m.error.at_state) || "") : -1;
+    const curIdx = errored ? (failedAt >= 0 ? failedAt + 1 : 0) : stages.indexOf(m.state);
 
     const beads = [];
-    STAGES.forEach((s, k) => {
+    stages.forEach((s, k) => {
       let cls = "step";
       if (errored && k === curIdx) cls += " failed";
       else if (k < curIdx) cls += " done";
@@ -1321,7 +1330,7 @@ function renderProcessing(st) {
       // into a red X reads as "this part succeeded", which it didn't
       if (k > 0) beads.push(`<div class="step-line${
         k <= curIdx && !(errored && k === curIdx) ? " done" : ""}"></div>`);
-      beads.push(`<div class="${cls}"><div class="bead">${glyph}</div><div class="nm">${STAGE_LABEL[s]}</div></div>`);
+      beads.push(`<div class="${cls}"><div class="bead">${glyph}</div><div class="nm">${labels[s]}</div></div>`);
     });
 
     const err = errored ? `

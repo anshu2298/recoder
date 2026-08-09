@@ -357,6 +357,9 @@ class RecordingManager:
                 "folder": meeting.folder.name,
                 "title": meta.get("title"),
                 "state": state.value,
+                # An ingested meeting was never captured or transcribed here;
+                # the UI needs this to avoid ticking stages that never ran.
+                "source": meta.get("source") or "capture",
             }
             if state == MeetingState.error:
                 entry["error"] = meta.get("error")

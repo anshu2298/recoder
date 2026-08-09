@@ -105,6 +105,19 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
         """Live rollup of the configured worktree family (computed on read)."""
         from recoder.analysis.register import build_register, render_register_md
 
+        def _commit(entry) -> dict:
+            return {
+                "cid": entry.cid,
+                "ts": entry.ts,
+                "branch": entry.branch,
+                "title": entry.title,
+                "what": entry.what,
+                "why": entry.why,
+                "files": entry.files,
+                "next": entry.next_step,
+                "score": entry.score,
+            }
+
         trees = build_register(config)
         return {
             "markdown": render_register_md(trees),
@@ -115,6 +128,24 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
                     "stale_days": t.stale_days,
                     "focus": t.current_focus,
                     "next": t.next_step,
+                    "task": _commit(t.task) if t.task else None,
+                    "recent": [_commit(c) for c in t.recent],
+                    "git": (
+                        {
+                            "is_repo": t.git.is_repo,
+                            "repo": t.git.repo,
+                            "branch": t.git.branch,
+                            "detached": t.git.detached,
+                            "upstream": t.git.upstream,
+                            "ahead": t.git.ahead,
+                            "behind": t.git.behind,
+                            "dirty": t.git.dirty,
+                            "head": t.git.head,
+                            "commits": t.git.commits,
+                        }
+                        if t.git is not None
+                        else None
+                    ),
                     "milestones": [
                         {"ts": ts, "text": text} for ts, text in t.milestones
                     ],

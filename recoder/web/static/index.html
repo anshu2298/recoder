@@ -369,21 +369,73 @@ svg.i.lg { width: 18px; height: 18px; }
 .wt-card .next { font-size: 11.5px; color: var(--text-3); margin-top: 5px; line-height: 1.45;
                  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .wt-card .next b { color: var(--text-2); font-weight: 550; }
-.wt-card .miles { margin: 8px 0 0; padding: 0; list-style: none; display: none;
-                  border-top: 1px solid var(--line); padding-top: 8px; }
-.wt-card.open .miles { display: block; }
-.wt-card .miles li { font-size: 11px; color: var(--text-3); line-height: 1.45; margin-top: 5px;
-                     overflow-wrap: anywhere; padding-left: 10px; position: relative; }
-.wt-card .miles li::before { content: ""; position: absolute; left: 0; top: 7px;
-  width: 3px; height: 3px; border-radius: 50%; background: var(--line-3); }
-.wt-card .miles li span { color: var(--text-4); font-variant-numeric: tabular-nums; }
-.wt-more {
-  margin-top: 7px; background: none; border: 0; padding: 0; cursor: pointer;
-  font-size: 11px; color: var(--text-4); display: inline-flex; align-items: center; gap: 4px;
+.wt-card { cursor: pointer; }
+.wt-card:hover { border-color: var(--accent-line); }
+/* where the tree physically lives — repo/branch/dirty, in one mono strip */
+.gitline {
+  display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-4);
 }
-.wt-more:hover { color: var(--accent-hi); }
-.wt-more svg { transition: transform .15s; }
-.wt-card.open .wt-more svg { transform: rotate(90deg); }
+.gitline .branch { color: var(--accent-hi); }
+.gitline .sha { color: var(--text-4); }
+.gitline .drift { color: var(--warn); }
+.gitline .dirty { color: var(--warn); }
+.gitline .sep { opacity: .45; }
+
+/* ---- worktree report (detail pane) ---- */
+.rep { max-width: 860px; display: flex; flex-direction: column; gap: 16px; }
+.repo-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 14px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-1); font-size: 12.5px;
+}
+.repo-strip .nm { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.repo-strip .divider { width: 1px; height: 15px; background: var(--line-2); }
+.task-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.task-head .cid { font-family: var(--mono); font-size: 11px; color: var(--text-4); }
+.task-title { font-size: 14.5px; font-weight: 600; line-height: 1.45; margin-top: 8px; color: var(--text); }
+.fld-grid { display: grid; grid-template-columns: 54px minmax(0,1fr); gap: 9px 12px; margin-top: 12px; }
+.fld-grid dt {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-4); padding-top: 3px;
+}
+.fld-grid dd { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text-2); }
+.fld-grid dd.next { color: var(--text); }
+.file-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.file-chips span {
+  font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: var(--r-xs);
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text-3);
+  max-width: 100%; overflow-wrap: anywhere;
+}
+
+/* timeline of preceding changes */
+.tl { position: relative; padding-left: 18px; }
+.tl::before { content: ""; position: absolute; left: 4px; top: 6px; bottom: 6px;
+              width: 1px; background: var(--line-2); }
+.tl-item { position: relative; padding: 0 0 13px; }
+.tl-item:last-child { padding-bottom: 0; }
+.tl-item::before {
+  content: ""; position: absolute; left: -18px; top: 5px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--surface-4); border: 1px solid var(--line-3);
+}
+.tl-item .ts { font-size: 10.5px; color: var(--text-4); font-variant-numeric: tabular-nums; }
+.tl-item .ti { font-size: 12.5px; color: var(--text); line-height: 1.5; margin-top: 1px; }
+.tl-item .de { font-size: 12px; color: var(--text-3); line-height: 1.55; margin-top: 3px;
+               display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.commit-row {
+  display: grid; grid-template-columns: 66px minmax(0,1fr) auto; gap: 12px; align-items: baseline;
+  padding: 7px 0; border-top: 1px solid var(--line); font-size: 12.5px;
+}
+.commit-row:first-child { border-top: 0; }
+.commit-row .sha { font-family: var(--mono); font-size: 11px; color: var(--accent-hi); }
+.commit-row .sub { color: var(--text-2); line-height: 1.45; overflow-wrap: anywhere; }
+.commit-row .meta { font-size: 10.5px; color: var(--text-4); white-space: nowrap; }
+.store-row {
+  font-family: var(--mono); font-size: 11px; color: var(--text-3);
+  padding: 5px 0; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere;
+}
+.store-row .dot { width: 5px; height: 5px; border-radius: 50%; flex: none; }
 
 /* ==========================================================================
    Processing view
@@ -671,6 +723,11 @@ svg.i.lg { width: 18px; height: 18px; }
         <span class="lbl">To-dos</span>
         <span class="count" id="c-todos" style="display:none">0</span>
       </button>
+      <button class="nav-btn" data-view="worktrees">
+        <svg class="i" viewBox="0 0 24 24"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        <span class="lbl">Worktrees</span>
+        <span class="count" id="c-worktrees" style="display:none">0</span>
+      </button>
       <button class="nav-btn" data-view="archive">
         <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>
         <span class="lbl">Archive</span>
@@ -786,6 +843,20 @@ svg.i.lg { width: 18px; height: 18px; }
       <div class="md-detail" id="todo-detail"></div>
     </section>
 
+    <!-- ---------- WORKTREES ---------- -->
+    <section id="view-worktrees" class="view split md">
+      <div class="md-list">
+        <div class="md-tools">
+          <div class="search">
+            <svg class="i sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="wt-q" class="input" placeholder="Search worktrees" autocomplete="off" />
+          </div>
+        </div>
+        <div class="md-items scroll" id="wt-list"></div>
+      </div>
+      <div class="md-detail" id="wt-detail"></div>
+    </section>
+
     <!-- ---------- ARCHIVE ---------- -->
     <section id="view-archive" class="view split md">
       <div class="md-list">
@@ -869,6 +940,7 @@ const ICON = {
   doc:   '<path d="M4 4a2 2 0 0 1 2-2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 12h8M8 16h5"/>',
   img:   '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 16-5-5L5 20"/>',
   quote: '<path d="M6 17h3l2-4V6H5v7h3zM15 17h3l2-4V6h-6v7h3z"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
 };
 const svg = (name, cls) =>
   `<svg class="i ${cls || ""}" viewBox="0 0 24 24">${ICON[name] || ""}</svg>`;
@@ -1008,6 +1080,7 @@ const PAGE = {
   record:     { title: "Record",     crumb: "Capture a meeting" },
   processing: { title: "Processing", crumb: "Pipeline status" },
   todos:      { title: "To-dos",     crumb: "Action items and build specs" },
+  worktrees:  { title: "Worktrees",  crumb: "Live project state from CCR memory and git" },
   archive:    { title: "Archive",    crumb: "Past meetings" },
 };
 let current = "record";
@@ -1026,6 +1099,7 @@ function switchView(v) {
   if (v === "archive") loadMeetings();
   if (v === "processing") renderProcessing(lastStatus);
   if (v === "todos") loadTodos();
+  if (v === "worktrees") { renderTreeList(); renderTreeDetail(); }
 }
 switchView("record");
 
@@ -1033,7 +1107,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeModal(); $("lightbox").classList.remove("on"); }
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return;
-  const map = { "1": "record", "2": "processing", "3": "todos", "4": "archive" };
+  const map = { "1": "record", "2": "processing", "3": "todos", "4": "worktrees", "5": "archive" };
   if (map[e.key]) switchView(map[e.key]);
 });
 
@@ -1571,42 +1645,215 @@ function stopSpecPoll() {
 }
 
 /* ==========================================================================
-   Worktree register — computed server-side on read, fetched once per open
+   Worktree register — computed server-side on read (CCR memory + live git),
+   summarised on Record and reported in full in its own view
    ========================================================================== */
+let trees = [];
+let activeTree = null;
+let treeQuery = "";
+
+$("wt-q").oninput = (e) => { treeQuery = e.target.value.toLowerCase(); renderTreeList(); };
+
+function treeAge(t) {
+  if (!t.last_active) return "no store";
+  if (t.stale_days === 0) return "today";
+  if (t.stale_days === 1) return "1d ago";
+  return `${t.stale_days}d ago`;
+}
+function treeDotColor(t) {
+  if (!t.last_active) return "var(--text-4)";
+  return t.stale_days != null && t.stale_days >= 7 ? "var(--warn)" : "var(--ok)";
+}
+
+/* the same repo/branch/drift strip, rendered compactly for list rows */
+function gitline(g) {
+  if (!g || !g.is_repo) return "";
+  const bits = [`<span>${esc(g.repo)}</span>`];
+  bits.push(g.branch ? `<span class="branch">${esc(g.branch)}</span>`
+                     : `<span class="drift">detached</span>`);
+  if (g.head) bits.push(`<span class="sha">${esc(g.head)}</span>`);
+  if (g.ahead) bits.push(`<span class="drift">↑${g.ahead}</span>`);
+  if (g.behind) bits.push(`<span class="drift">↓${g.behind}</span>`);
+  if (g.dirty) bits.push(`<span class="dirty">●${g.dirty}</span>`);
+  return `<div class="gitline">${bits.join('<span class="sep">/</span>')}</div>`;
+}
+
 async function loadRegister() {
   let data;
   try { data = await jget("/api/register"); }
   catch (e) { $("wt-body").innerHTML = ""; return; }
-  const trees = (data && data.trees) || [];
+  trees = (data && data.trees) || [];
+  const c = $("c-worktrees");
+  c.style.display = trees.length ? "" : "none";
+  c.textContent = trees.length;
+
   if (!trees.length) {
-    $("wt-body").innerHTML = `<div class="empty" style="min-height:0;padding:28px 8px">
+    const msg = `<div class="empty" style="min-height:0;padding:28px 8px">
       <div class="d">No worktrees configured. Add <code>[register_trees.*]</code> blocks
       to <code>recoder.toml</code> to see project state here.</div></div>`;
+    $("wt-body").innerHTML = msg;
+    $("wt-list").innerHTML = msg;
     return;
   }
   $("wt-count").textContent = trees.length;
-  $("wt-body").innerHTML = trees.map((t) => {
-    const stale = t.stale_days != null && t.stale_days >= 7;
-    const age = t.last_active
-      ? (t.stale_days === 0 ? "today" : t.stale_days === 1 ? "1d ago" : `${t.stale_days}d ago`)
-      : "no store";
-    const miles = (t.milestones || []).slice(0, 5).map((m) =>
-      `<li><span>${esc(String(m.ts).slice(5, 10))}</span> ${esc(m.text)}</li>`).join("");
-    return `<div class="wt-card">
+
+  // compact summary on the Record screen: identity, where it lives, what it's on
+  $("wt-body").innerHTML = trees.map((t) => `
+    <div class="wt-card" data-tree="${esc(t.name)}">
       <div class="r1">
-        <span class="dot" style="width:6px;height:6px;border-radius:50%;flex:none;background:${
-          !t.last_active ? "var(--text-4)" : stale ? "var(--warn)" : "var(--ok)"}"></span>
+        <span style="width:6px;height:6px;border-radius:50%;flex:none;background:${treeDotColor(t)}"></span>
         <span class="nm">${esc(t.name)}</span>
-        <span class="age${stale || !t.last_active ? " stale" : ""}">${esc(age)}</span>
+        <span class="age${t.stale_days >= 7 || !t.last_active ? " stale" : ""}">${esc(treeAge(t))}</span>
       </div>
-      ${t.focus ? `<div class="focus">${esc(t.focus)}</div>` : ""}
+      ${gitline(t.git)}
+      ${t.task ? `<div class="focus">${esc(t.task.title)}</div>`
+               : t.focus ? `<div class="focus">${esc(t.focus)}</div>` : ""}
       ${t.next ? `<div class="next"><b>Next:</b> ${esc(t.next)}</div>` : ""}
-      ${miles ? `<ul class="miles">${miles}</ul>
-        <button class="wt-more">${svg("chevR", "sm")} milestones</button>` : ""}
+    </div>`).join("");
+  els(".wt-card", $("wt-body")).forEach((card) => (card.onclick = () => {
+    activeTree = card.dataset.tree;
+    switchView("worktrees");
+  }));
+
+  renderTreeList();
+  if (!activeTree && trees.length) activeTree = trees[0].name;
+  renderTreeDetail();
+}
+
+function renderTreeList() {
+  const rows = trees.filter((t) => !treeQuery || t.name.toLowerCase().includes(treeQuery));
+  const list = $("wt-list");
+  if (!rows.length) { list.innerHTML = `<div class="empty"><div class="d">No worktrees match.</div></div>`; return; }
+  list.innerHTML = rows.map((t) => `
+    <button class="row${t.name === activeTree ? " active" : ""}" data-tree="${esc(t.name)}">
+      <div class="t">${esc(t.name)}</div>
+      <div class="m">
+        <span style="width:5px;height:5px;border-radius:50%;background:${treeDotColor(t)}"></span>
+        <span class="s">${esc(treeAge(t))}</span>
+        ${t.git && t.git.branch ? `<span class="tag accent">${esc(t.git.branch)}</span>` : ""}
+        ${t.git && t.git.dirty ? `<span class="tag warn">${t.git.dirty} dirty</span>` : ""}
+      </div></button>`).join("");
+  els(".row", list).forEach((b) => (b.onclick = () => {
+    activeTree = b.dataset.tree;
+    renderTreeList();
+    renderTreeDetail();
+  }));
+}
+
+function renderTreeDetail() {
+  const t = trees.find((x) => x.name === activeTree);
+  const pane = $("wt-detail");
+  if (!t) {
+    pane.innerHTML = `<div class="empty"><div class="ico">${svg("branch")}</div>
+      <div class="t">Select a worktree</div>
+      <div class="d">Each tree reports the repo and branch it is checked out on, the task
+      currently in flight, and the changes that led up to it.</div></div>`;
+    return;
+  }
+  const g = t.git || {};
+
+  const repoStrip = g.is_repo ? `
+    <div class="repo-strip">
+      ${svg("branch", "sm")}
+      <span class="nm">${esc(g.repo)}</span>
+      <span class="divider"></span>
+      ${g.branch ? `<span class="tag accent">${esc(g.branch)}</span>`
+                 : `<span class="tag warn">detached HEAD</span>`}
+      ${g.head ? `<span class="nm" style="color:var(--text-4)">${esc(g.head)}</span>` : ""}
+      <span class="divider"></span>
+      ${g.ahead ? `<span class="tag warn">↑ ${g.ahead} ahead</span>` : ""}
+      ${g.behind ? `<span class="tag warn">↓ ${g.behind} behind</span>` : ""}
+      ${!g.ahead && !g.behind && g.upstream
+        ? `<span class="tag ok"><span class="dot"></span>in sync</span>` : ""}
+      ${g.dirty ? `<span class="tag warn">${g.dirty} uncommitted</span>`
+                : `<span class="tag ok"><span class="dot"></span>clean</span>`}
+      ${g.upstream ? `<span class="nm" style="color:var(--text-4)">${esc(g.upstream)}</span>` : ""}
+    </div>`
+    : `<div class="notice">${svg("alert")}<div>No git checkout found at this tree's
+       configured path — showing CCR memory only.</div></div>`;
+
+  const task = t.task;
+  const taskPanel = task ? `
+    <div class="panel">
+      <div class="panel-h">${svg("play", "sm")}<h3>Current task</h3><span class="spacer"></span>
+        ${task.cid ? `<span class="tag">${esc(task.cid)}</span>` : ""}
+        <span class="tag">${esc(task.ts)}</span>
+        ${task.score ? `<span class="tag ok">score ${esc(task.score)}</span>` : ""}</div>
+      <div class="panel-b">
+        <div class="task-title">${esc(task.title)}</div>
+        ${task.what || task.why || task.next || (task.files || []).length ? `
+        <dl class="fld-grid">
+          ${task.what ? `<dt>What</dt><dd>${esc(task.what)}</dd>` : ""}
+          ${task.why  ? `<dt>Why</dt><dd>${esc(task.why)}</dd>` : ""}
+          ${task.files && task.files.length ? `<dt>Files</dt><dd><div class="file-chips">${
+            task.files.map((f) => `<span>${esc(f)}</span>`).join("")}</div></dd>` : ""}
+          ${task.next ? `<dt>Next</dt><dd class="next">${esc(task.next)}</dd>` : ""}
+        </dl>`
+        // milestone-only entries carry a headline and nothing else: say so
+        // rather than leaving an empty field grid under the title
+        : `<div style="margin-top:9px;font-size:12px;color:var(--text-4)">
+             Recorded as a milestone — no What/Why/Files detail was written for
+             this entry. The commits below carry the full record.</div>`}
+      </div></div>`
+    : t.focus ? `<div class="panel"><div class="panel-h"><h3>Current focus</h3></div>
+        <div class="panel-b"><div style="font-size:13px;line-height:1.6;color:var(--text-2)">${
+          esc(t.focus)}</div></div></div>`
+    : "";
+
+  const priors = (t.recent && t.recent.length)
+    ? t.recent.map((c) => `<div class="tl-item">
+        <div class="ts">${esc(c.ts)}${c.cid ? " · " + esc(c.cid) : ""}</div>
+        <div class="ti">${esc(c.title)}</div>
+        ${c.what || c.why ? `<div class="de">${esc(c.what || c.why)}</div>` : ""}
+      </div>`).join("")
+    : (t.milestones || []).slice(0, 5).map((m) => `<div class="tl-item">
+        <div class="ts">${esc(m.ts)}</div><div class="ti">${esc(m.text)}</div></div>`).join("");
+
+  const priorPanel = priors ? `
+    <div class="panel">
+      <div class="panel-h">${svg("clock", "sm")}<h3>Preceding changes</h3></div>
+      <div class="panel-b"><div class="tl">${priors}</div></div></div>` : "";
+
+  const commits = (g.commits || []).map((c) => `
+    <div class="commit-row">
+      <span class="sha">${esc(c.sha)}</span>
+      <span class="sub">${esc(c.subject)}</span>
+      <span class="meta">${esc(c.author)} · ${esc(c.date)}</span>
+    </div>`).join("");
+  const commitPanel = commits ? `
+    <div class="panel">
+      <div class="panel-h">${svg("branch", "sm")}<h3>Recent code commits</h3><span class="spacer"></span>
+        <span class="tag">${esc(g.branch || "HEAD")}</span></div>
+      <div class="panel-b" style="padding:8px 16px 12px">${commits}</div></div>` : "";
+
+  const stores = (t.stores || []).map((s) => `
+    <div class="store-row">
+      <span class="dot" style="background:${s.exists ? "var(--ok)" : "var(--text-4)"}"></span>
+      ${esc(s.path)}${s.exists ? "" : ' <span style="color:var(--text-4)">(no .ccr)</span>'}
+    </div>`).join("");
+  const storePanel = stores ? `
+    <div class="panel">
+      <div class="panel-h">${svg("doc", "sm")}<h3>Memory stores</h3></div>
+      <div class="panel-b" style="padding:8px 16px 12px">${stores}</div></div>` : "";
+
+  pane.innerHTML = `
+    <div class="detail-h">
+      <div class="r1"><h1>${esc(t.name)}</h1></div>
+      <div class="sub">
+        <span class="tag ${t.stale_days >= 7 || !t.last_active ? "warn" : "ok"}">
+          <span class="dot"></span>${esc(treeAge(t))}</span>
+        ${t.last_active ? `<span>last memory commit ${esc(t.last_active)}</span>` : ""}
+      </div>
+    </div>
+    <div class="detail-body scroll" style="padding-top:18px">
+      <div class="rep">
+        ${repoStrip}
+        ${taskPanel}
+        ${priorPanel}
+        ${commitPanel}
+        ${storePanel}
+      </div>
     </div>`;
-  }).join("");
-  els(".wt-more", $("wt-body")).forEach((b) =>
-    (b.onclick = () => b.closest(".wt-card").classList.toggle("open")));
 }
 
 /* ==========================================================================

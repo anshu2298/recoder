@@ -46,31 +46,52 @@ def render_transcript(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_frame_table(frame_inventory: list[dict]) -> str:
+def render_frame_table(
+    frame_inventory: list[dict], evidence: list[dict] | None = None
+) -> str:
     """Render the frames inventory as a markdown table.
 
-    Columns: filename, clock time (wall), window title, fallback flag. The
-    fallback flag surfaces the occlusion limitation (spec §4.1): a fullscreen
-    fallback grab may show unrelated desktop content rather than the meeting.
+    Columns: filename, transcript offset, nearby speech (from the evidence
+    join, when available), window title, source, fallback flag. The fallback
+    flag surfaces the occlusion limitation (spec §4.1): a fullscreen fallback
+    grab may show unrelated desktop content rather than the meeting.
     """
+    by_file: dict[str, dict] = {
+        str(e.get("file")): e for e in (evidence or [])
+    }
     header = (
-        "| Filename | Clock time | Window title | Source | Fallback fullscreen |\n"
-        "| --- | --- | --- | --- | --- |"
+        "| Filename | Offset | Nearby speech | Window title | Source | Fallback |\n"
+        "| --- | --- | --- | --- | --- | --- |"
     )
     if not frame_inventory:
-        return header + "\n| (no frames captured) | | | | |"
+        return header + "\n| (no frames captured) | | | | | |"
 
     rows: list[str] = []
     for entry in frame_inventory:
         filename = str(entry.get("file") or entry.get("filename") or "").strip()
-        wall = str(entry.get("wall") or "").strip()
+        ev = by_file.get(filename, {})
+        mmss = str(ev.get("mmss") or "")
+        speech = str(ev.get("speech") or "").replace("|", "\\|")
         title = str(entry.get("window_title") or "").strip().replace("|", "\\|")
         source = str(entry.get("source") or "window")
         if entry.get("presenting"):
             source += " (screen-share active)"
         fallback = bool(entry.get("fallback_fullscreen", False))
         flag = "yes" if fallback else "no"
-        rows.append(f"| {filename} | {wall} | {title} | {source} | {flag} |")
+        rows.append(
+            f"| {filename} | {mmss} | {speech} | {title} | {source} | {flag} |"
+        )
+    return header + "\n" + "\n".join(rows)
+
+
+def render_sheet_table(sheets: list[dict]) -> str:
+    """Render the contact-sheet index as a markdown table."""
+    header = "| Sheet | Covers | Frames |\n| --- | --- | --- |"
+    rows = [
+        f"| frames/sheets/{s.get('file')} | {s.get('range') or '?'} "
+        f"| {len(s.get('frames') or [])} |"
+        for s in sheets
+    ]
     return header + "\n" + "\n".join(rows)
 
 
@@ -135,6 +156,8 @@ def build_analysis_prompt(
     duration_s: float,
     mounted_projects: list[dict] | None = None,
     register_md: str = "",
+    evidence: list[dict] | None = None,
+    sheets: list[dict] | None = None,
 ) -> str:
     """Build the full analysis prompt for one meeting.
 
@@ -147,8 +170,23 @@ def build_analysis_prompt(
     context_note = str(meta.get("context_note") or "").strip() or "(none provided)"
     started_at = str(meta.get("started_at") or "unknown")
     duration = _fmt_duration(duration_s)
-    frame_table = render_frame_table(frame_inventory)
+    frame_table = render_frame_table(frame_inventory, evidence)
     mounts_block = render_mounted_projects(mounted_projects or [])
+
+    sheets_block = ""
+    if sheets:
+        sheets_block = f"""
+### Contact sheets — READ THESE FIRST
+Every frame is montaged into 4x4 contact sheets under `frames/sheets/`; each
+tile is stamped `[MM:SS] #seq` (transcript offset + frame number). Read ALL
+the sheets first — they are few and small — so you can SEE the whole meeting
+before choosing frames. Then open at full resolution ONLY the frames whose
+tile shows something worth reading closely (slides, documents, code, demos).
+Do not open full-res frames that the sheet already shows to be talking heads
+or off-topic desktop content.
+
+{render_sheet_table(sheets)}
+"""
 
     register_block = ""
     if register_md.strip():
@@ -197,6 +235,11 @@ screens while a screen-share was active — when the user was presenting, these
 show the content being presented (slides, demos, code) and are usually the
 most informative frames. A monitor frame can still be an unshared side screen,
 so ignore any that are clearly unrelated to the discussion.
+{sheets_block}
+### Frame inventory
+The "Offset" column is the frame's position on the transcript timeline and
+"Nearby speech" is what was being said around that moment — use them to pick
+frames that coincide with the discussion points you are summarizing.
 
 {frame_table}
 

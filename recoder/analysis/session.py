@@ -394,6 +394,12 @@ def analyze(
     except Exception:  # noqa: BLE001 - the register must never sink analysis
         register_md = ""
 
+    # Contact sheets + transcript↔frame links (deterministic, idempotent,
+    # local). Gives the analyst sight of every frame before it opens any.
+    from recoder.analysis.evidence import ensure_evidence
+
+    evidence, sheets = ensure_evidence(meeting_folder)
+
     transcript_md = render_transcript(segments)
     prompt = build_analysis_prompt(
         meta,
@@ -402,6 +408,8 @@ def analyze(
         duration_s,
         mounted_projects=mounted_projects,
         register_md=register_md,
+        evidence=evidence,
+        sheets=sheets,
     )
     options = _build_options(
         meeting_folder, config, ANALYZE_MAX_TURNS, mounts=mounts

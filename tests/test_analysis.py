@@ -39,6 +39,14 @@ Relates to the recoder billing project.
 | Speaker | Name | Evidence |
 | --- | --- | --- |
 | SPEAKER_1 | Rahul | addressed by name |
+
+## Action Items JSON
+```json
+{"items": [{"id": "ai-1", "owner": "Rahul", "task": "Fix invoice bug",
+ "due": "Friday", "kind": "build", "project": "recoder",
+ "evidence": {"segments": [{"t": "00:15", "quote": "the invoice bug"}], "frames": []},
+ "state_relation": "extends billing v2"}]}
+```
 """
 
 
@@ -199,7 +207,15 @@ def test_analyze_happy_path_writes_summary(tmp_path: Path, cfg: Config) -> None:
     text = summary_path.read_text(encoding="utf-8")
     assert text.startswith("# Meeting Summary")
     for section in prompts.REQUIRED_SECTIONS:
+        if section == "## Action Items JSON":
+            continue  # machine payload: persisted + stripped from the summary
         assert section in text
+    # the JSON section was extracted to action-items.json and stripped
+    assert "## Action Items JSON" not in text
+    items = json.loads((folder / "action-items.json").read_text(encoding="utf-8"))
+    assert items["items"][0]["task"] == "Fix invoice bug"
+    assert items["items"][0]["kind"] == "build"
+    assert items["items"][0]["evidence"]["segments"][0]["t"] == "00:15"
     # atomic write leaves no tmp behind
     assert not (folder / "summary.md.tmp").exists()
     assert len(runner.calls) == 1

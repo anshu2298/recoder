@@ -97,6 +97,19 @@ def process(folder: str = typer.Argument(...)) -> None:
 
 
 @app.command()
+def spec(
+    folder: str = typer.Argument(..., help="Meeting folder"),
+    item_id: str = typer.Argument(..., help="Action item id, e.g. ai-2"),
+) -> None:
+    """Generate a build spec for one meeting action item (Claude session)."""
+    from recoder.analysis.spec import generate_spec
+    from recoder.config import load_config
+
+    path = generate_spec(Path(folder), item_id, load_config())
+    typer.echo(f"Spec written: {path}")
+
+
+@app.command()
 def replay(folder: str = typer.Argument(...)) -> None:
     """Re-run the full pipeline on an existing meeting folder (acceptance test)."""
     from recoder.config import load_config

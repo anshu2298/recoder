@@ -1,16 +1,27 @@
 """Extract structured data back out of a finished summary.md.
 
 The analysis session emits ``## Action Items`` as a markdown table with
-columns Owner | Task | Due (see prompts.REQUIRED_SECTIONS). The web UI wants
-those rows as JSON, so this module parses them back out. Pure functions, no
-I/O; tolerant of a missing section or a malformed table (returns []).
+columns Owner | Task | Due, plus ``## Action Items JSON`` — the same items as
+a fenced JSON block with evidence refs (segments/frames), a build/coordination
+kind, a target project, and a relation to the project's current state. The
+JSON section is parsed and persisted to ``action-items.json`` by the analysis
+stage and then stripped from the human-facing summary; the table remains the
+regex fallback for meetings analyzed before the JSON contract existed.
+
+Pure functions, no I/O; tolerant of missing sections and malformed content.
 """
 
 from __future__ import annotations
 
+import json
 import re
 
-__all__ = ["extract_section", "extract_action_items"]
+__all__ = [
+    "extract_section",
+    "extract_action_items",
+    "extract_action_items_json",
+    "strip_action_items_json",
+]
 
 _HEADER_RE = re.compile(r"^##\s+", re.MULTILINE)
 
@@ -65,3 +76,79 @@ def extract_action_items(summary_md: str | None) -> list[dict]:
             continue
         items.append({"owner": owner, "task": task, "due": due})
     return items
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
+_AI_JSON_HEADER_RE = re.compile(
+    r"^##\s+Action Items JSON\s*$", re.MULTILINE
+)
+
+
+def extract_action_items_json(summary_md: str | None) -> list[dict] | None:
+    """Parse the ``## Action Items JSON`` fenced block into a list of items.
+
+    Returns ``None`` (not ``[]``) when the section/fence is absent or the JSON
+    is invalid, so callers can distinguish "old-format summary" from "the
+    meeting genuinely had zero action items". Items are lightly normalized:
+    non-dict entries dropped, ids backfilled, evidence dict guaranteed.
+    """
+    section = extract_section(summary_md or "", "Action Items JSON")
+    if not section:
+        return None
+    fence = _JSON_FENCE_RE.search(section)
+    payload = fence.group(1) if fence else section
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    items = data.get("items") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        return None
+
+    normalized: list[dict] = []
+    for i, item in enumerate(items, 1):
+        if not isinstance(item, dict):
+            continue
+        task = str(item.get("task") or "").strip()
+        if not task:
+            continue
+        evidence = item.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        normalized.append(
+            {
+                "id": str(item.get("id") or f"ai-{i}"),
+                "owner": str(item.get("owner") or "").strip(),
+                "task": task,
+                "due": str(item.get("due") or "").strip(),
+                "kind": str(item.get("kind") or "other").strip() or "other",
+                "project": (item.get("project") or None),
+                "evidence": {
+                    "segments": [
+                        s for s in evidence.get("segments") or []
+                        if isinstance(s, dict)
+                    ],
+                    "frames": [
+                        str(f) for f in evidence.get("frames") or []
+                    ],
+                },
+                "state_relation": str(item.get("state_relation") or "").strip(),
+            }
+        )
+    return normalized
+
+
+def strip_action_items_json(summary_md: str) -> str:
+    """Remove the ``## Action Items JSON`` section from a summary document.
+
+    The JSON is machine payload; once persisted to ``action-items.json`` it
+    has no business in the human-facing summary. Removes from the header to
+    the next ``##`` heading (or end of document).
+    """
+    match = _AI_JSON_HEADER_RE.search(summary_md)
+    if match is None:
+        return summary_md
+    tail = summary_md[match.end():]
+    nxt = _HEADER_RE.search(tail)
+    end = match.end() + (nxt.start() if nxt else len(tail))
+    return (summary_md[: match.start()].rstrip() + "\n" + summary_md[end:].lstrip("\n")).strip() + "\n"

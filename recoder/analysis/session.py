@@ -432,6 +432,23 @@ def analyze(
                 f"corrective turn: {', '.join(missing)}"
             )
 
+    # Persist the structured action items and strip the machine payload from
+    # the human-facing summary. A missing/invalid JSON section is tolerated
+    # (the markdown table remains the fallback) — never fail a finished
+    # analysis over it.
+    from recoder.analysis.action_items import (
+        extract_action_items_json,
+        strip_action_items_json,
+    )
+
+    items = extract_action_items_json(summary)
+    if items is not None:
+        _atomic_write(
+            meeting_folder / "action-items.json",
+            json.dumps({"items": items}, indent=2, ensure_ascii=False) + "\n",
+        )
+    summary = strip_action_items_json(summary)
+
     _atomic_write(meeting_folder / "summary.md", summary + "\n")
 
 

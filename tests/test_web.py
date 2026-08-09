@@ -230,9 +230,54 @@ def test_meeting_detail_action_items(client, store):
     )
     m = _seed_meeting(store, "AI", state=MeetingState.committed, summary=summary)
     d = client.get(f"/api/meetings/{m.folder.name}").json()
-    assert d["action_items"] == [
-        {"owner": "Rahul", "task": "Fix invoice bug", "due": "Friday"}
-    ]
+    # Table fallback path (no action-items.json): normalized structured shape.
+    assert len(d["action_items"]) == 1
+    item = d["action_items"][0]
+    assert item["owner"] == "Rahul"
+    assert item["task"] == "Fix invoice bug"
+    assert item["due"] == "Friday"
+    assert item["kind"] == "other"
+    assert item["id"] == "ai-1"
+
+
+def test_todos_endpoint_lists_items_with_spec_status(client, store):
+    import json as _json
+
+    summary = "# Meeting Summary\n\n## Action Items\nnone\n"
+    m = _seed_meeting(store, "Todos", state=MeetingState.committed, summary=summary)
+    (m.folder / "action-items.json").write_text(
+        _json.dumps({"items": [{
+            "id": "ai-1", "owner": "Anshu", "task": "Build X", "due": "",
+            "kind": "build", "project": "linkedin-enrich",
+            "evidence": {"segments": [], "frames": []}, "state_relation": "",
+        }]}),
+        encoding="utf-8",
+    )
+    data = client.get("/api/todos").json()
+    assert len(data) == 1
+    item = data[0]["items"][0]
+    assert item["task"] == "Build X"
+    assert item["spec"] == {"status": "none"}
+
+    # spec status endpoint: none -> (fake a done spec) -> done with content
+    r = client.get(f"/api/meetings/{m.folder.name}/items/ai-1/spec")
+    assert r.json()["status"] == "none"
+    specs = m.folder / "specs"
+    specs.mkdir()
+    (specs / "ai-1.md").write_text("# Build Spec: X\ncontent", encoding="utf-8")
+    r = client.get(f"/api/meetings/{m.folder.name}/items/ai-1/spec")
+    assert r.json()["status"] == "done"
+    assert "content" in r.json()["content"]
+    # generating an already-done spec is a no-op
+    r = client.post(f"/api/meetings/{m.folder.name}/items/ai-1/spec")
+    assert r.json()["status"] == "done"
+    # bad ids rejected
+    assert client.get(
+        f"/api/meetings/{m.folder.name}/items/..%2Fx/spec"
+    ).status_code in (400, 404)
+    assert client.post(
+        f"/api/meetings/{m.folder.name}/items/nope/spec"
+    ).status_code == 404
 
 
 def test_meeting_detail_action_items_empty_without_summary(client, store):

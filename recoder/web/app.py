@@ -8,6 +8,7 @@ names and frame paths (no arbitrary filesystem access).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -15,7 +16,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from recoder.analysis.action_items import extract_action_items
 from recoder.config import Config
 from recoder.store import Meeting, MeetingStore
 from recoder.web.recording import RecordingManager
@@ -150,6 +150,8 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
 
     @app.get("/api/meetings/{name}")
     def meeting_detail(name: str) -> dict:
+        from recoder.analysis.spec import load_action_items
+
         meeting = _resolve_meeting(name)
         meta = meeting.read_meta()
         summary = _read_text(meeting.summary_md)
@@ -158,7 +160,8 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
             "meta": meta,
             "transcript": _read_text(meeting.transcript_md),
             "summary": summary,
-            "action_items": extract_action_items(summary),
+            # Structured items (action-items.json) with table fallback inside.
+            "action_items": load_action_items(meeting.folder),
             "frames": _frame_files(meeting),
         }
 
@@ -193,5 +196,106 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
         # The runner's error -> predecessor logic reruns the failed stage.
         manager.start_pipeline(meeting.folder)
         return {"folder": meeting.folder.name}
+
+    # -- todos + specs -------------------------------------------------------
+
+    @app.get("/api/todos")
+    def todos() -> list[dict]:
+        """Action items across all summarized meetings, newest meeting first."""
+        from recoder.analysis.spec import load_action_items, spec_status
+
+        result: list[dict] = []
+        for meeting in store.list_meetings():
+            if not meeting.summary_md.exists():
+                continue
+            try:
+                meta = meeting.read_meta()
+            except OSError:
+                continue
+            items = load_action_items(meeting.folder)
+            if not items:
+                continue
+            result.append(
+                {
+                    "folder": meeting.folder.name,
+                    "title": meta.get("title"),
+                    "date": meta.get("started_at"),
+                    "items": [
+                        {
+                            **item,
+                            "spec": spec_status(
+                                meeting.folder, str(item.get("id"))
+                            ),
+                        }
+                        for item in items
+                    ],
+                }
+            )
+        return result
+
+    _ITEM_ID_RE = r"^[A-Za-z0-9_-]{1,32}$"
+
+    def _validate_item_id(item_id: str) -> str:
+        import re as _re
+
+        if not _re.fullmatch(_ITEM_ID_RE, item_id):
+            raise HTTPException(status_code=400, detail="invalid item id")
+        return item_id
+
+    @app.get("/api/meetings/{name}/items/{item_id}/spec")
+    def item_spec(name: str, item_id: str) -> dict:
+        from recoder.analysis.spec import spec_status
+
+        meeting = _resolve_meeting(name)
+        item_id = _validate_item_id(item_id)
+        status = spec_status(meeting.folder, item_id)
+        content = None
+        if status.get("status") == "done":
+            content = _read_text(meeting.folder / "specs" / f"{item_id}.md")
+        return {**status, "content": content}
+
+    @app.post("/api/meetings/{name}/items/{item_id}/spec")
+    def item_spec_generate(name: str, item_id: str) -> dict:
+        """Kick off spec generation in a DETACHED child (survives app close)."""
+        import subprocess
+        import sys
+
+        from recoder.analysis.spec import load_action_items, spec_status
+
+        meeting = _resolve_meeting(name)
+        item_id = _validate_item_id(item_id)
+        if not any(
+            i.get("id") == item_id for i in load_action_items(meeting.folder)
+        ):
+            raise HTTPException(status_code=404, detail="unknown action item")
+        status = spec_status(meeting.folder, item_id)
+        if status.get("status") in ("running", "done"):
+            return status
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        log_path = meeting.folder / "specs" / f"{item_id}.log"
+        log_path.parent.mkdir(exist_ok=True)
+        with log_path.open("ab") as log:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "recoder",
+                    "spec",
+                    str(meeting.folder),
+                    item_id,
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+        return {"status": "running"}
 
     return app

@@ -113,6 +113,23 @@
   }
   table.ai { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
 
+  /* To-dos */
+  .todos-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 14px; max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+  .todo-item { display: block; width: 100%; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; color: var(--text); font: inherit; cursor: pointer; }
+  .todo-item.active { border-color: var(--accent); background: var(--panel-2); }
+  .todo-item .t { font-size: 13px; }
+  .todo-item .m { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.build { color: #7ec8ff; border-color: #2b5875; }
+  .badge.spec-done { color: #8fe08f; border-color: #2f6b2f; }
+  .badge.spec-running { color: #e0c368; border-color: #6b5c2f; }
+  .badge.spec-error { color: #e08f8f; border-color: #6b2f2f; }
+  .todo-meeting-h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 6px; }
+  .todo-meeting-h:first-child { margin-top: 0; }
+  .spec-doc { white-space: pre-wrap; font-size: 12.5px; line-height: 1.55; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  .evi { font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+  .evi b { color: var(--text); }
+
   /* Worktree register */
   #register-wrap { max-width: 980px; margin: 28px auto 0; padding: 0 16px; }
   .reg-title { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
@@ -148,6 +165,7 @@
     <button data-view="record" class="active">Record</button>
     <button data-view="processing">Processing</button>
     <button data-view="archive">Archive</button>
+    <button data-view="todos">To-dos</button>
   </nav>
 </header>
 
@@ -187,6 +205,15 @@
     <div id="processing-empty" class="empty">Nothing processing right now.</div>
   </section>
 
+  <!-- TODOS -->
+  <section id="view-todos" class="view">
+    <div class="todos-layout">
+      <div id="todo-list" class="mtg-list"></div>
+      <div id="todo-detail" class="detail"><div class="empty">Select a to-do.</div></div>
+    </div>
+    <div id="todos-empty" class="empty" style="display:none">No action items yet.</div>
+  </section>
+
   <!-- ARCHIVE -->
   <section id="view-archive" class="view">
     <div class="archive-layout">
@@ -214,6 +241,7 @@ function switchView(v) {
     s.classList.toggle("active", s.id === "view-" + v));
   if (v === "archive") loadMeetings();
   if (v === "processing") renderProcessing(lastStatus);
+  if (v === "todos") loadTodos();
 }
 
 // --- fetch helpers ---
@@ -394,6 +422,104 @@ function stopPolling() { if (timer) { clearInterval(timer); timer = null; } }
 document.addEventListener("visibilitychange", () =>
   document.hidden ? stopPolling() : startPolling());
 startPolling();
+
+// --- to-dos ---
+let todosData = [];
+let activeTodo = null; // {folder, id}
+let specPollTimer = null;
+
+async function loadTodos() {
+  try { todosData = await jget("/api/todos"); } catch (e) { todosData = []; }
+  const list = $("todo-list");
+  const any = todosData.some((m) => (m.items || []).length);
+  $("todos-empty").style.display = any ? "none" : "";
+  list.innerHTML = todosData.map((m) => {
+    const head = `<div class="todo-meeting-h">${esc(m.title || m.folder)} · ${esc((m.date || "").slice(0, 10))}</div>`;
+    const rows = (m.items || []).map((it) => {
+      const spec = (it.spec && it.spec.status) || "none";
+      const active = activeTodo && activeTodo.folder === m.folder && activeTodo.id === it.id;
+      return `<button class="todo-item${active ? " active" : ""}" data-folder="${esc(m.folder)}" data-id="${esc(it.id)}">
+        <div class="t">${esc(it.task)}</div>
+        <div class="m">
+          <span>${esc(it.owner || "unassigned")}</span>
+          <span class="badge ${it.kind === "build" ? "build" : ""}">${esc(it.kind || "other")}</span>
+          ${it.project ? `<span class="badge">${esc(it.project)}</span>` : ""}
+          ${spec !== "none" ? `<span class="badge spec-${esc(spec)}">spec: ${esc(spec)}</span>` : ""}
+        </div>
+      </button>`;
+    }).join("");
+    return head + rows;
+  }).join("");
+  list.querySelectorAll(".todo-item").forEach((b) => {
+    b.onclick = () => showTodo(b.dataset.folder, b.dataset.id);
+  });
+  if (activeTodo) renderTodoDetail();
+}
+
+function findTodo(folder, id) {
+  const m = todosData.find((x) => x.folder === folder);
+  const it = m && (m.items || []).find((x) => x.id === id);
+  return it ? { meeting: m, item: it } : null;
+}
+
+function showTodo(folder, id) {
+  activeTodo = { folder, id };
+  loadTodos(); // refresh highlight + spec badges
+}
+
+async function renderTodoDetail() {
+  const hit = activeTodo && findTodo(activeTodo.folder, activeTodo.id);
+  const el = $("todo-detail");
+  if (!hit) { el.innerHTML = '<div class="empty">Select a to-do.</div>'; return; }
+  const { meeting, item } = hit;
+  const segs = ((item.evidence || {}).segments || [])
+    .map((s) => `<div>[${esc(s.t)}] &ldquo;${esc(s.quote)}&rdquo;</div>`).join("");
+  let specHtml = "";
+  let spec = { status: "none" };
+  try { spec = await jget(`/api/meetings/${meeting.folder}/items/${item.id}/spec`); } catch (e) {}
+  if (spec.status === "done") {
+    specHtml = `<div class="spec-doc">${esc(spec.content || "")}</div>`;
+    stopSpecPoll();
+  } else if (spec.status === "running") {
+    specHtml = `<div class="empty">Generating spec&hellip; (this runs in its own process; safe to close the app)</div>`;
+    startSpecPoll();
+  } else {
+    if (spec.status === "error") {
+      specHtml = `<div class="banner">Spec generation failed: ${esc(spec.error || "unknown")}</div>`;
+    }
+    specHtml += `<button class="action" id="gen-spec">Generate build spec</button>`;
+    stopSpecPoll();
+  }
+  el.innerHTML = `
+    <h2>${esc(item.task)}</h2>
+    <div class="evi">
+      <div><b>Owner:</b> ${esc(item.owner || "unassigned")} &nbsp; <b>Kind:</b> ${esc(item.kind || "other")}
+        ${item.project ? ` &nbsp; <b>Project:</b> ${esc(item.project)}` : ""}
+        ${item.due ? ` &nbsp; <b>Due:</b> ${esc(item.due)}` : ""}</div>
+      ${item.state_relation ? `<div style="margin-top:6px"><b>Relation:</b> ${esc(item.state_relation)}</div>` : ""}
+      ${segs ? `<div style="margin-top:6px"><b>Evidence:</b>${segs}</div>` : ""}
+      <div style="margin-top:6px"><b>From:</b> ${esc(meeting.title || meeting.folder)}</div>
+    </div>
+    ${specHtml}`;
+  const gen = $("gen-spec");
+  if (gen) gen.onclick = async () => {
+    gen.disabled = true;
+    try {
+      await jpost(`/api/meetings/${meeting.folder}/items/${item.id}/spec`);
+      startSpecPoll();
+      renderTodoDetail();
+    } catch (e) { gen.disabled = false; alert("Failed to start: " + e.message); }
+  };
+}
+
+function startSpecPoll() {
+  if (!specPollTimer) specPollTimer = setInterval(() => {
+    if (current === "todos" && activeTodo) renderTodoDetail(); else stopSpecPoll();
+  }, 4000);
+}
+function stopSpecPoll() {
+  if (specPollTimer) { clearInterval(specPollTimer); specPollTimer = null; }
+}
 
 // --- worktree register (fetched once per app open; live-computed server-side) ---
 function esc(s) {

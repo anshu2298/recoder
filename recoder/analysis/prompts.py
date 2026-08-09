@@ -20,6 +20,7 @@ REQUIRED_SECTIONS: tuple[str, ...] = (
     "## Open Questions",
     "## Project Mapping",
     "## Speakers",
+    "## Action Items JSON",
 )
 
 
@@ -271,6 +272,26 @@ Section requirements:
 - `## Speakers`: a table mapping each SPEAKER_n to a probable real name with the
   evidence for it (e.g. "addressed by name at 14:32"), or "unknown" if there is
   no evidence.
+- `## Action Items JSON`: the SAME action items as the table above, but as ONE
+  fenced ```json block — an object {{"items": [...]}} where each item is:
+    {{"id": "ai-1",                     // sequential
+      "owner": "...", "task": "...", "due": "",
+      "kind": "build" | "coordination" | "other",
+        // "build" ONLY for concrete engineering work on the user's own
+        // projects (a feature, fix, migration, prototype); meetings,
+        // emails, walkthroughs are "coordination".
+      "project": "<name>" | null,
+        // for build items: the CCR project store or worktree-register tree
+        // this work belongs to (e.g. "linkedin-enrich"), else null
+      "evidence": {{"segments": [{{"t": "MM:SS", "quote": "<short verbatim>"}}],
+                   "frames": ["<filename from the inventory>"]}},
+        // the transcript moments (and any frames) that establish this item
+      "state_relation": "..."
+        // one sentence on how it relates to the project's CURRENT state
+        // from the memory you searched (extends/conflicts/unblocks what),
+        // or "" if no relation was found
+    }}
+  Valid JSON only inside the fence — no comments, no trailing commas.
 
 Reference on-screen content wherever a frame informed the summary. Write the
 final document as your LAST message, with nothing after it.

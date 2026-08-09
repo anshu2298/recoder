@@ -96,6 +96,54 @@ def process(folder: str = typer.Argument(...)) -> None:
     _run_pipeline(folder)
 
 
+@app.command(name="import")
+def import_meeting(
+    url: str = typer.Argument(..., help="Fathom share link."),
+    context: str = typer.Option(
+        None, "--context", "-c", help="Optional note about why this meeting matters."
+    ),
+    no_frames: bool = typer.Option(
+        False, "--no-frames", help="Skip video entirely; transcript only."
+    ),
+    process_after: bool = typer.Option(
+        True, "--process/--no-process", help="Run the pipeline after importing."
+    ),
+) -> None:
+    """Import a meeting recorded by Fathom from its share link.
+
+    For meetings you could not record yourself — you were not there, or the
+    recorder was not running. The transcript comes from Fathom (real speaker
+    names, no transcription cost) and frames are extracted only if somebody
+    shared a screen.
+    """
+    from recoder.config import load_config
+    from recoder.ingest.runner import IngestError, ingest_share_url
+
+    try:
+        result = ingest_share_url(
+            url, load_config(), context_note=context, want_frames=not no_frames
+        )
+    except IngestError as exc:
+        typer.echo(f"Import failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Imported: {result.meeting.folder}")
+    typer.echo(
+        f"  {result.segments} segments from "
+        f"{len(result.speakers)} speakers: {', '.join(result.speakers)}"
+    )
+    if result.frames:
+        typer.echo(f"  {result.frames} frames extracted ({result.frames_reason})")
+    else:
+        typer.echo(f"  no frames: {result.frames_reason}")
+
+    if process_after:
+        typer.echo("Running analysis...")
+        _run_pipeline(str(result.meeting.folder))
+    else:
+        typer.echo(f"Process later with: recoder process {result.meeting.folder}")
+
+
 @app.command()
 def spec(
     folder: str = typer.Argument(..., help="Meeting folder"),

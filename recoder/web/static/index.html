@@ -634,6 +634,58 @@ svg.i.lg { width: 18px; height: 18px; }
 }
 .gen-box .d { font-size: 12.5px; color: var(--text-4); max-width: 400px; line-height: 1.55; }
 
+/* ---- import a recording (a meeting Recoder did not capture) --------------
+   A peer of "Start recording", not a competitor: same card language, one
+   step quieter — dashed rule, ghost button — so the primary action keeps
+   its weight while this stays discoverable. */
+.import-card {
+  border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-1);
+  padding: 14px 16px; display: flex; align-items: center; gap: 14px;
+}
+.import-card .ic {
+  width: 34px; height: 34px; flex: none; border-radius: var(--r-sm);
+  background: var(--surface-3); border: 1px solid var(--line-2);
+  display: grid; place-items: center; color: var(--text-3);
+}
+.import-card .ic svg { width: 17px; height: 17px; }
+.import-card .tx { min-width: 0; flex: 1; }
+.import-card .tx b { font-weight: 560; font-size: 13px; }
+.import-card .tx .d { color: var(--text-4); font-size: 12px; margin-top: 2px; line-height: 1.5; }
+.import-card .btn { flex: none; }
+
+/* import modal: the run can take minutes, so it reports rather than blocks */
+.imp-steps { display: flex; flex-direction: column; gap: 9px; margin-top: 14px; }
+.imp-step {
+  display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px;
+  color: var(--text-4); line-height: 1.5;
+}
+.imp-step .dot {
+  width: 15px; height: 15px; flex: none; margin-top: 1px; border-radius: 50%;
+  border: 1.5px solid var(--line-3); display: grid; place-items: center;
+}
+.imp-step.run .dot { border-color: var(--accent); animation: impSpin 1s linear infinite; border-right-color: transparent; }
+.imp-step.run { color: var(--text-2); }
+.imp-step.done .dot { border-color: var(--ok); background: var(--ok); }
+.imp-step.done .dot::after { content: ""; width: 6px; height: 3px; border-left: 1.5px solid #08130d;
+  border-bottom: 1.5px solid #08130d; transform: rotate(-45deg) translate(0.5px, -1px); }
+.imp-step.done { color: var(--text-2); }
+.imp-step.skip { color: var(--text-4); }
+.imp-step.skip .dot { border-style: dashed; }
+@keyframes impSpin { to { transform: rotate(360deg) } }
+.imp-note {
+  margin-top: 13px; padding: 10px 12px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--line);
+  font-size: 12px; color: var(--text-3); line-height: 1.55;
+}
+
+/* source badge — an ingested meeting is not a captured one */
+.src-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
+  border-radius: var(--r-full); font-size: 10.5px; font-weight: 560;
+  letter-spacing: .02em; text-transform: uppercase;
+  background: var(--accent-soft); color: var(--accent-hi); border: 1px solid var(--accent-line);
+}
+
 /* ==========================================================================
    Overlays — toasts, modal, lightbox
    ========================================================================== */
@@ -803,6 +855,18 @@ svg.i.lg { width: 18px; height: 18px; }
             playing through a device Recoder isn't capturing. Check your Windows output device.</div>
           </div>
 
+          <div class="import-card">
+            <div class="ic">
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+            </div>
+            <div class="tx">
+              <b>Missed a meeting?</b>
+              <div class="d">Import it from a Fathom share link — transcript with real speaker
+                names, plus screens if anyone presented.</div>
+            </div>
+            <button class="btn" id="imp-open">Import</button>
+          </div>
+
         </div>
       </div>
 
@@ -891,6 +955,36 @@ svg.i.lg { width: 18px; height: 18px; }
     <div class="modal-f">
       <button class="btn" id="m-cancel">Cancel</button>
       <button class="btn primary" id="m-ok">Reprocess</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="imp-scrim">
+  <div class="modal">
+    <div class="modal-h">
+      <h2>Import a recording</h2>
+      <div class="d">For a meeting you couldn't record — you weren't there, or Recoder wasn't
+        running. Paste the Fathom share link.</div>
+    </div>
+    <div class="modal-b">
+      <div class="field">
+        <label for="imp-url">Fathom share link</label>
+        <input id="imp-url" class="input" placeholder="https://fathom.video/share/…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label for="imp-note">Why it matters <span style="color:var(--text-4)">— optional, steers the summary</span></label>
+        <input id="imp-note" class="input" placeholder="Decisions here affect the payment-coverage branch" autocomplete="off" />
+      </div>
+      <div class="imp-steps" id="imp-steps" style="display:none">
+        <div class="imp-step" id="imp-s1"><span class="dot"></span><span>Reading the transcript</span></div>
+        <div class="imp-step" id="imp-s2"><span class="dot"></span><span>Checking whether anyone shared a screen</span></div>
+        <div class="imp-step" id="imp-s3"><span class="dot"></span><span>Extracting screens from the recording</span></div>
+      </div>
+      <div class="imp-note" id="imp-note-box" style="display:none"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn" id="imp-cancel">Cancel</button>
+      <button class="btn primary" id="imp-ok">Import</button>
     </div>
   </div>
 </div>
@@ -1300,9 +1394,13 @@ function renderMeetingList() {
       : m.state === "error"
       ? '<span class="tag err"><span class="dot"></span>Error</span>'
       : `<span class="tag"><span class="dot"></span>${esc(m.state || "?")}</span>`;
+    // An imported meeting reads differently — no mic, real names, screens only
+    // if someone presented — so it is marked rather than silently blended in.
+    const src = m.source && m.source !== "capture"
+      ? `<span class="src-badge">${esc(m.source)}</span>` : "";
     html += `<button class="row${m.folder === selected ? " active" : ""}" data-folder="${esc(m.folder)}">
       <div class="t">${esc(m.title || m.folder)}</div>
-      <div class="m"><span class="s">${esc(fmtDate(m.date))}</span>${state}</div>
+      <div class="m"><span class="s">${esc(fmtDate(m.date))}</span>${state}${src}</div>
     </button>`;
   });
   list.innerHTML = html;
@@ -1465,6 +1563,98 @@ $("m-ok").onclick = async () => {
     switchView("processing");
     await poll();
   } catch (e) { toast("Reprocess failed: " + (e.message || e), "err"); }
+};
+
+/* ---- import a recording --------------------------------------------------
+   The request is genuinely long: reading the transcript is instant, but a
+   meeting with a screen-share streams the whole video, which runs for minutes.
+   So the modal stays open and narrates instead of spinning on a dead button.
+   The step states are advanced optimistically on a timer — the server does not
+   stream progress — and reconciled against the real result when it lands. */
+let importing = false;
+
+function impStep(id, state) {
+  const n = $(id);
+  if (n) n.className = "imp-step" + (state ? " " + state : "");
+}
+function impReset() {
+  $("imp-steps").style.display = "none";
+  $("imp-note-box").style.display = "none";
+  ["imp-s1", "imp-s2", "imp-s3"].forEach((s) => impStep(s, ""));
+}
+function openImport() {
+  $("imp-url").value = "";
+  $("imp-note").value = "";
+  impReset();
+  $("imp-ok").disabled = false;
+  $("imp-ok").textContent = "Import";
+  $("imp-scrim").classList.add("on");
+  setTimeout(() => $("imp-url").focus(), 30);
+}
+function closeImport() {
+  if (importing) return;   // never strand a running import behind a closed modal
+  $("imp-scrim").classList.remove("on");
+}
+$("imp-open").onclick = openImport;
+$("imp-cancel").onclick = closeImport;
+$("imp-scrim").onclick = (e) => { if (e.target === $("imp-scrim")) closeImport(); };
+$("imp-url").onkeydown = (e) => { if (e.key === "Enter") $("imp-ok").click(); };
+
+$("imp-ok").onclick = async () => {
+  const url = $("imp-url").value.trim();
+  if (!url) { $("imp-url").focus(); return; }
+  const note = $("imp-note").value.trim();
+
+  importing = true;
+  $("imp-ok").disabled = true;
+  $("imp-ok").textContent = "Importing…";
+  $("imp-cancel").disabled = true;
+  $("imp-steps").style.display = "flex";
+  $("imp-note-box").style.display = "none";
+  impStep("imp-s1", "run");
+
+  // The transcript lands in a second or two; the survey takes ~10s. Advance
+  // the narration on that rough cadence so the user sees which phase is slow.
+  const t1 = setTimeout(() => { impStep("imp-s1", "done"); impStep("imp-s2", "run"); }, 2500);
+  const t2 = setTimeout(() => {
+    impStep("imp-s2", "done");
+    impStep("imp-s3", "run");
+    $("imp-note-box").style.display = "block";
+    $("imp-note-box").textContent =
+      "Someone presented, so the recording is being downloaded to pull the screens out. " +
+      "This runs at about a quarter of the meeting's length — you can leave this open.";
+  }, 16000);
+
+  try {
+    const r = await jpost("/api/import", {
+      url: url, context_note: note || null, want_frames: true,
+    });
+    clearTimeout(t1); clearTimeout(t2);
+    impStep("imp-s1", "done");
+    impStep("imp-s2", "done");
+    impStep("imp-s3", r.frames ? "done" : "skip");
+    $("imp-note-box").style.display = "block";
+    $("imp-note-box").textContent = r.frames
+      ? `${r.frames} screen${r.frames === 1 ? "" : "s"} extracted — ${r.frames_reason}`
+      : `No screens: ${r.frames_reason}`;
+
+    toast(`Imported "${r.title || "meeting"}" — ${r.segments} segments`);
+    setTimeout(() => {
+      importing = false;
+      $("imp-cancel").disabled = false;
+      $("imp-scrim").classList.remove("on");
+      switchView("processing");
+      poll();
+    }, 1400);
+  } catch (e) {
+    clearTimeout(t1); clearTimeout(t2);
+    importing = false;
+    $("imp-cancel").disabled = false;
+    $("imp-ok").disabled = false;
+    $("imp-ok").textContent = "Import";
+    impReset();
+    toast("Import failed: " + (e.message || e), "err");
+  }
 };
 
 /* ==========================================================================

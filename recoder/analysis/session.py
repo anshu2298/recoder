@@ -30,6 +30,7 @@ from recoder.analysis.prompts import (
     REQUIRED_SECTIONS,
     build_analysis_prompt,
     build_commit_prompt,
+    build_ingested_analysis_prompt,
 )
 from recoder.store import MeetingStore
 
@@ -401,7 +402,15 @@ def analyze(
     evidence, sheets = ensure_evidence(meeting_folder)
 
     transcript_md = render_transcript(segments)
-    prompt = build_analysis_prompt(
+    # A meeting Recoder did not record is a different analysis problem, not a
+    # variation on the same one — real speaker names, no context note, and
+    # frames that may legitimately not exist (spec §4.6).
+    build_prompt = (
+        build_ingested_analysis_prompt
+        if meta.get("source") == "fathom"
+        else build_analysis_prompt
+    )
+    prompt = build_prompt(
         meta,
         transcript_md,
         frame_inventory,

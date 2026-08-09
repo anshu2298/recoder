@@ -298,6 +298,222 @@ final document as your LAST message, with nothing after it.
 """
 
 
+def render_participants(participants: list[str], host_email: str = "") -> str:
+    """Render the speaker roster of an ingested meeting."""
+    if not participants:
+        return "(the recording named no speakers)"
+    lines = [f"- {name}" for name in participants]
+    if host_email:
+        lines.append(f"\nThe recording was made from the account: {host_email}")
+    return "\n".join(lines)
+
+
+def build_ingested_analysis_prompt(
+    meta: dict,
+    transcript_md: str,
+    frame_inventory: list[dict],
+    duration_s: float,
+    mounted_projects: list[dict] | None = None,
+    register_md: str = "",
+    evidence: list[dict] | None = None,
+    sheets: list[dict] | None = None,
+) -> str:
+    """Build the analysis prompt for a meeting Recoder did not record (§4.6).
+
+    Deliberately NOT a flag on :func:`build_analysis_prompt`. An ingested
+    meeting differs in kind, not degree:
+
+    * **Speakers are real names**, not ``Me``/``SPEAKER_n``. There is no
+      diarization to second-guess, and no microphone marking which voice is
+      the user's — so the prompt must work out the user's involvement from
+      the content, rather than being told.
+    * **There is no context note.** The user was not there to write one, so
+      the CCR memory and the worktree register carry the whole burden of
+      grounding.
+    * **Frames may legitimately not exist.** A notetaker records the call's
+      gallery view, so unless somebody shared a screen there is nothing to
+      show, and their absence is information rather than a failure.
+
+    The output contract is identical to the captured-meeting prompt (same
+    REQUIRED_SECTIONS, same Action Items JSON), so every downstream consumer —
+    validation, action items, specs, the UI — is unchanged.
+    """
+    title = str(meta.get("title") or "Untitled meeting")
+    started_at = str(meta.get("started_at") or "unknown")
+    source_url = str(meta.get("source_url") or "")
+    host_email = str(meta.get("host_email") or "")
+    participants = [str(p) for p in (meta.get("participants") or [])]
+    frames_status = str(meta.get("frames_status") or "")
+    frames_reason = str(meta.get("frames_reason") or "")
+    duration = _fmt_duration(duration_s)
+    mounts_block = render_mounted_projects(mounted_projects or [])
+
+    if frame_inventory:
+        sheets_block = ""
+        if sheets:
+            sheets_block = f"""
+### Contact sheets — READ THESE FIRST
+Every frame is montaged into 4x4 contact sheets under `frames/sheets/`, each
+tile stamped `[MM:SS] #seq`. Read ALL the sheets first, then open at full
+resolution ONLY the frames showing something worth reading closely.
+
+{render_sheet_table(sheets)}
+"""
+        frames_block = f"""## On-screen frames
+Somebody shared their screen during this meeting, and the recording is the ONLY
+copy of what was on it. Frames were extracted from the recording roughly every
+20 seconds and de-duplicated; your working directory is the meeting folder.
+
+Because these come from the call recording rather than the user's own screen,
+a frame shows the shared content as everyone in the meeting saw it, usually
+with participant webcam tiles along one edge. Read the shared content closely —
+dashboards, code, documents and designs discussed here are frequently the
+substance of the meeting, and the transcript alone will refer to them only as
+"this" and "here".
+{sheets_block}
+### Frame inventory
+"Offset" places the frame on the transcript timeline and "Nearby speech" is
+what was being said at that moment — use them to tie what is on screen to what
+was being discussed.
+
+{render_frame_table(frame_inventory, evidence)}
+"""
+    else:
+        explanation = {
+            "no-screen-content": (
+                "Nobody shared a screen, so the recording contains only "
+                "webcam video and there is nothing on-screen to read."
+            ),
+            "unavailable": "The recording's video could not be read.",
+            "failed": "Frame extraction failed.",
+            "skipped": "Frame extraction was skipped for this import.",
+        }.get(frames_status, "No frames were extracted.")
+        frames_block = f"""## On-screen frames
+None. {explanation}{f' ({frames_reason})' if frames_reason else ''}
+
+This is expected, not a defect — work entirely from the transcript, and do not
+speculate about visual content you cannot see.
+"""
+
+    register_block = ""
+    if register_md.strip():
+        register_block = f"""
+### Worktree register (live rollup)
+The user's active project spans several worktrees. This machine-collated
+snapshot gives every tree's current focus, next step and recent changes. The
+user did not write a context note for this meeting — they were not necessarily
+in it — so this register and the CCR stores are your ONLY grounding for what
+the user is actually working on. Use it to judge which discussion points touch
+their work.
+
+{register_md.strip()}
+"""
+
+    sections_list = "\n".join(f"  - {s}" for s in REQUIRED_SECTIONS)
+
+    return f"""You are analyzing a meeting that was recorded by a third-party
+notetaker and imported. The user did NOT capture this meeting themselves.
+
+## Meeting metadata
+- Title: {title}
+- Started at: {started_at}
+- Duration: {duration}
+- Imported from: {source_url or "a shared recording link"}
+
+## Participants (as labelled by the recording)
+{render_participants(participants, host_email)}
+
+## Transcript
+Segments are rendered as `[MM:SS] Speaker: text`. These are REAL names supplied
+by the notetaker, not diarization guesses — you can trust who said what, and
+you do not need to infer speaker identities.
+
+{transcript_md}
+
+## Your reader, and what they need from this
+The user may have been in this meeting or may not have been. **Do not treat
+that as the question, and do not hedge on it.** Summarize the meeting
+completely and on its own terms either way: everything discussed, decided,
+disputed and left open, as a full record for someone who needs to know what
+happened.
+
+Then, on top of that complete record, do the thing that only you can do here:
+work out what lands on the user. They were not necessarily present to take
+notes, push back, or accept the work assigned to them, so anything aimed at
+them is arriving late and second-hand.
+
+Establish their involvement from the evidence rather than assuming it. Search
+the CCR memory below for the people, projects and topics named in the
+transcript; the register tells you which worktrees they own and what they are
+mid-way through. From that, work out which of the named participants is the
+user, if any, and treat these as first-class findings wherever they occur:
+
+- decisions that change, block, or contradict work the user has in flight
+- commitments made **on the user's behalf**, or work assigned to them in
+  absentia — call these out explicitly, naming who assigned them and when
+- claims made about the user's work, its status, or its quality
+- things they would obviously have objected to or corrected had they been there
+- context they now need in order to act on any of the above
+
+If the meeting genuinely has no bearing on the user's work, say so plainly in
+the TL;DR rather than manufacturing relevance.
+
+{frames_block}
+## Project memory (CCR)
+BEFORE writing the summary, use `gcc_search` and `gcc_context` on the recoder
+store to pull related project memory for the people, projects and topics named
+in the transcript. This is how you establish what the discussion actually
+refers to — you have no context note to lean on.
+
+### Project memory available
+{mounts_block}
+{register_block}
+## Required output
+Write ONE complete markdown document with EXACTLY these sections, in this order:
+{sections_list}
+
+Section requirements:
+- `## TL;DR`: 2-4 sentences. Say what the meeting was about AND, in one
+  sentence, what it means for the user (including "nothing directly" when that
+  is the honest answer).
+- `## Discussion`: the discussion organized by topic, as a complete record.
+- `## Decisions`: concrete decisions reached. For each, note whether it affects
+  work the user owns, citing the project or worktree.
+- `## Action Items`: a markdown table with columns Owner, Task, Due (leave Due
+  blank unless a due date/time was actually stated). Include items assigned to
+  the user in their absence, and items owned by others that the user is
+  waiting on.
+- `## Open Questions`: unresolved questions, plus anything the user would
+  likely want to challenge or correct given what the memory says about their
+  work.
+- `## Project Mapping`: which CCR project store(s) or worktrees each topic maps
+  to, citing concrete commits or decisions your searches found.
+- `## Speakers`: a table of each named participant with their apparent role and
+  what they were responsible for in this discussion. Mark which one is the user
+  (or state that they do not appear to have spoken), with your evidence.
+- `## Action Items JSON`: the SAME action items as the table above, as ONE
+  fenced ```json block — an object {{"items": [...]}} where each item is:
+    {{"id": "ai-1",                     // sequential
+      "owner": "...", "task": "...", "due": "",
+      "kind": "build" | "coordination" | "other",
+        // "build" ONLY for concrete engineering work on the user's own
+        // projects; meetings, emails, walkthroughs are "coordination".
+      "project": "<name>" | null,
+        // for build items: the CCR project store or worktree-register tree
+        // this work belongs to, else null
+      "evidence": {{"segments": [{{"t": "MM:SS", "quote": "<short verbatim>"}}],
+                   "frames": ["<filename from the inventory>"]}},
+      "state_relation": "..."
+        // one sentence on how it relates to that project's CURRENT state from
+        // the memory you searched (extends/conflicts/unblocks what), or "" if
+        // no relation was found
+    }}
+  Valid JSON only inside the fence — no comments, no trailing commas.
+
+Write the final document as your LAST message, with nothing after it.
+"""
+
+
 def build_commit_prompt(
     summary_md: str, meta: dict, mounted_projects: list[dict] | None = None
 ) -> str:

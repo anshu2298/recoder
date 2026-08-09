@@ -260,6 +260,64 @@ class MeetingStore:
         )
         return meeting
 
+    def import_meeting(
+        self,
+        title: str | None,
+        *,
+        started_at: str | None = None,
+        state: MeetingState = MeetingState.diarized,
+        **extra: object,
+    ) -> Meeting:
+        """Create a meeting that was recorded elsewhere (spec §4.6).
+
+        Unlike :meth:`create_meeting` this does not start at ``recording``:
+        an ingested meeting already has its transcript, so it enters the
+        pipeline at ``diarized`` and the transcribe/diarize stages — the only
+        billed ones — never run. ``extra`` lands verbatim in ``meta.json``
+        (source, share URL, participants), and ``started_at`` preserves when
+        the meeting ACTUALLY happened rather than when it was imported, so it
+        files in the archive next to its neighbours in time.
+        """
+        self.meetings_dir.mkdir(parents=True, exist_ok=True)
+
+        # Folder names come from the real meeting time when we know it; a
+        # malformed timestamp falls back to now rather than failing the import.
+        stamp_source = _now()
+        if started_at:
+            try:
+                parsed = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+                stamp_source = parsed.astimezone() if parsed.tzinfo else parsed
+            except ValueError:
+                pass
+        stamp = stamp_source.strftime("%Y-%m-%d-%H%M")
+        base = f"{stamp}-{_slugify(title)}"
+
+        folder = self.meetings_dir / base
+        n = 2
+        while folder.exists():
+            folder = self.meetings_dir / f"{base}-{n}"
+            n += 1
+
+        folder.mkdir(parents=True)
+        (folder / "frames").mkdir()
+
+        meeting = Meeting(folder)
+        meeting._write_meta(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "state": MeetingState(state).value,
+                "title": title,
+                "context_note": None,
+                "started_at": (
+                    started_at or stamp_source.isoformat()
+                ),
+                "imported_at": _now().isoformat(),
+                "stages": {},
+                **extra,
+            }
+        )
+        return meeting
+
     def load(self, folder: Path | str) -> Meeting:
         return Meeting(Path(folder))
 

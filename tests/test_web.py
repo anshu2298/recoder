@@ -352,3 +352,63 @@ def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "Recoder" in r.text
+
+
+# --------------------------------------------------------------------------
+# Import a recording (spec §4.6)
+# --------------------------------------------------------------------------
+
+
+def test_import_creates_a_meeting_and_starts_the_pipeline(
+    client, monkeypatch, store, pipeline_spy
+):
+    """The endpoint adapts ingest_share_url and hands the meeting to the runner."""
+    from recoder.ingest.runner import IngestResult
+    import recoder.ingest.runner as runner_mod
+
+    def _fake(url, config, **kw):
+        meeting = store.import_meeting("Imported call", source="fathom")
+        return IngestResult(
+            meeting=meeting,
+            title="Imported call",
+            segments=42,
+            speakers=["Ada Lovelace", "Alan Turing"],
+            frames=7,
+            frames_status="extracted",
+            frames_reason="an admin dashboard was shown",
+        )
+
+    monkeypatch.setattr(runner_mod, "ingest_share_url", _fake)
+
+    r = client.post(
+        "/api/import", json={"url": "https://fathom.video/share/abc", "want_frames": True}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["segments"] == 42
+    assert body["frames"] == 7
+    assert body["speakers"] == ["Ada Lovelace", "Alan Turing"]
+    assert body["frames_status"] == "extracted"
+    # Analysis must have been kicked off for the freshly imported folder.
+    assert body["folder"] in [p.name for p in pipeline_spy.calls]
+
+
+def test_import_rejects_a_bad_link_with_422(client, monkeypatch):
+    import recoder.ingest.runner as runner_mod
+    from recoder.ingest.runner import IngestError
+
+    def _boom(url, config, **kw):
+        raise IngestError("not a Fathom share link")
+
+    monkeypatch.setattr(runner_mod, "ingest_share_url", _boom)
+    r = client.post("/api/import", json={"url": "https://example.com/x"})
+    assert r.status_code == 422
+    assert "Fathom" in r.json()["detail"]
+
+
+def test_meetings_list_marks_the_source(client, store):
+    store.import_meeting("Imported call", source="fathom")
+    store.create_meeting("Captured call", "ctx")
+    by_title = {m["title"]: m for m in client.get("/api/meetings").json()}
+    assert by_title["Imported call"]["source"] == "fathom"
+    assert by_title["Captured call"]["source"] == "capture"

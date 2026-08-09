@@ -33,6 +33,12 @@ class ReprocessBody(BaseModel):
     context_note: str | None = None
 
 
+class ImportBody(BaseModel):
+    url: str
+    context_note: str | None = None
+    want_frames: bool = True
+
+
 def create_app(config: Config, manager: RecordingManager | None = None) -> FastAPI:
     app = FastAPI(title="Recoder", docs_url=None, redoc_url=None)
     manager = manager or RecordingManager(config)
@@ -158,6 +164,40 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
             ],
         }
 
+    # -- ingest API ---------------------------------------------------------
+
+    @app.post("/api/import")
+    def import_share_link(body: ImportBody) -> dict:
+        """Import a meeting from a Fathom share link (spec §4.6).
+
+        Runs the fetch inline — it is a couple of HTTP calls plus, when a
+        screen-share is detected, a video download that can take minutes. The
+        download is the reason the pipeline is then started detached: the
+        caller gets its meeting back as soon as the transcript is on disk.
+        """
+        from recoder.ingest.runner import IngestError, ingest_share_url
+
+        try:
+            result = ingest_share_url(
+                body.url,
+                config,
+                context_note=body.context_note,
+                want_frames=body.want_frames,
+            )
+        except IngestError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        manager.start_pipeline(result.meeting.folder)
+        return {
+            "folder": result.meeting.folder.name,
+            "title": result.title,
+            "segments": result.segments,
+            "speakers": result.speakers,
+            "frames": result.frames,
+            "frames_status": result.frames_status,
+            "frames_reason": result.frames_reason,
+        }
+
     # -- archive API --------------------------------------------------------
 
     @app.get("/api/meetings")
@@ -175,6 +215,7 @@ def create_app(config: Config, manager: RecordingManager | None = None) -> FastA
                     "date": meta.get("started_at"),
                     "state": meta.get("state"),
                     "has_summary": meeting.summary_md.exists(),
+                    "source": meta.get("source") or "capture",
                 }
             )
         return result

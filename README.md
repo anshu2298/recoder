@@ -13,6 +13,11 @@ context note, and the accumulated memory of your active code projects — and
 runs the intelligence on your **Claude Code subscription** (no API key, no
 per-token cost).
 
+For meetings you *couldn't* record — you weren't there, or the recorder wasn't
+running — Recoder ingests Fathom instead of competing with it: paste a share
+link and the meeting joins the same pipeline, transcript and screens included.
+See [Importing a meeting you missed](#importing-a-meeting-you-missed).
+
 Everything runs and stays on your machine, with two exceptions you control:
 audio is sent to [Gladia](https://gladia.io) for transcription, and analysis
 runs through your Claude subscription.
@@ -95,6 +100,8 @@ meetings remember previous meetings.
 - **Gladia API key** — free at [app.gladia.io](https://app.gladia.io)
   (10 h/month free, includes diarization; $0.61/h after).
 - ~5 GB free disk on the drive holding `meetings/`.
+- **ffmpeg** on PATH (`winget install Gyan.FFmpeg`) — only needed to pull
+  screens out of an imported Fathom recording; everything else works without it.
 
 ## Setup
 
@@ -164,6 +171,37 @@ uv run recoder record --title "Sprint planning" --context "focus: billing revamp
 The one-line `--context` note is worth writing: it seeds both the analysis and
 the project-memory routing.
 
+### Importing a meeting you missed
+
+For meetings Recoder could not capture — you weren't in them, or the recorder
+wasn't running — paste a Fathom share link, either in the app (**Record → Import**)
+or from the terminal:
+
+```powershell
+uv run recoder import https://fathom.video/share/<token>
+uv run recoder import <url> --context "decisions here affect payment-coverage"
+uv run recoder import <url> --no-frames        # transcript only, skip the video
+```
+
+No API key and no login: everything comes from the share link itself. The
+transcript arrives with **real speaker names**, so the meeting skips
+transcription and diarization entirely — an import costs nothing and enters the
+pipeline at `diarized`, going straight to analysis.
+
+Screens are handled on demand. Fathom records the call's gallery view, so a
+meeting where nobody presented contains only webcam tiles and is not worth
+downloading. Recoder samples ten frames from across the recording (a few
+seconds, ~1 MB), looks at them, and only streams the full video when someone
+actually shared a screen — in which case that recording is the *only* copy of
+what was on it. Requires `ffmpeg` on PATH; without it the transcript still
+imports and the reason is recorded in `meta.json`.
+
+Imported meetings get their own analysis prompt. It writes the same summary
+sections as a captured meeting, then works out from the transcript and your
+project memory which of the participants you are, and surfaces what landed on
+you: decisions that touch work you have in flight, and commitments made in your
+absence.
+
 ### Processing and reprocessing
 
 ```powershell
@@ -222,6 +260,11 @@ meetings/2026-07-05-1447-sprint-planning/
 └── summary.md           # the context-aware summary (8 sections)
 ```
 
+An **imported** meeting has the same shape minus the audio: no WAV files and no
+`gladia-*.json` (nothing was transcribed), a `survey/` folder holding the ten
+sampled frames and the sheet the screen-share decision was made from, and a
+`meta.json` carrying `source: "fathom"`, the share URL and the participant list.
+
 Nothing in `meetings/` is ever uploaded anywhere except the two WAV files sent
 to Gladia for transcription. The folder is the source of truth; delete a
 meeting by deleting its folder.
@@ -234,13 +277,15 @@ meeting by deleting its folder.
 | Screen frames | Local only; read by Claude during analysis via your subscription |
 | Transcript, summary, memory | Local only (`meetings/`, `.ccr/` stores) |
 | Intelligence | Claude Code **subscription** auth — no API key, no metered tokens |
+| Imported recordings | Fetched from the Fathom share link you paste; nothing is sent to Fathom |
 
-Recurring cost: Gladia beyond 10 h/month ($0.61/h). That's it.
+Recurring cost: Gladia beyond 10 h/month ($0.61/h). That's it. Imported meetings
+add nothing — they arrive already transcribed.
 
 ## Development
 
 ```powershell
-uv run pytest                 # 144 tests, no hardware/network needed
+uv run pytest                 # 276 tests, no hardware/network needed
 uv run pytest tests/test_routing.py -v
 ```
 

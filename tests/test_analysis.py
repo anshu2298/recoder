@@ -184,6 +184,101 @@ def test_frame_table_source_column_marks_presented_monitors() -> None:
     assert "content being presented" in prompt
 
 
+# --- ingested-meeting prompt (spec §4.6) --------------------------------------
+def _ingested_meta(**over) -> dict:
+    meta = {
+        "title": "Impromptu Google Meet Meeting",
+        "started_at": "2026-07-31T10:01:46Z",
+        "source": "fathom",
+        "source_url": "https://fathom.video/share/abc123",
+        "host_email": "host@example.com",
+        "participants": ["prajwal prashanth", "Anshu Singh"],
+        "frames_status": "no-screen-content",
+        "frames_reason": "webcam tiles only",
+    }
+    meta.update(over)
+    return meta
+
+
+def test_ingested_prompt_keeps_the_same_output_contract() -> None:
+    """Downstream (validation, action items, specs) must not have to care."""
+    prompt = prompts.build_ingested_analysis_prompt(_ingested_meta(), "tx", [], 900.0)
+    for section in prompts.REQUIRED_SECTIONS:
+        assert section in prompt
+    assert "Action Items JSON" in prompt
+
+
+def test_ingested_prompt_lists_participants_and_provenance() -> None:
+    prompt = prompts.build_ingested_analysis_prompt(_ingested_meta(), "tx", [], 900.0)
+    assert "prajwal prashanth" in prompt
+    assert "Anshu Singh" in prompt
+    assert "https://fathom.video/share/abc123" in prompt
+    assert "host@example.com" in prompt
+
+
+def test_ingested_prompt_does_not_branch_on_attendance() -> None:
+    """The prompt must reason about involvement, not be told the answer.
+
+    The user was explicit that presence "is not the question": the summary has
+    to be complete either way, so the prompt must never be handed a was-he-there
+    flag to condition on.
+    """
+    # The prompt is hard-wrapped, so assert against a whitespace-normalized
+    # copy rather than tying these tests to where the lines happen to break.
+    flat = " ".join(
+        prompts.build_ingested_analysis_prompt(
+            _ingested_meta(), "tx", [], 900.0
+        ).split()
+    )
+    assert "Do not treat that as the question" in flat
+    assert "work out which of the named participants is the user" in flat
+    # It still has to surface what lands on them.
+    assert "on the user's behalf" in flat
+    assert "in absentia" in flat
+
+
+def test_ingested_prompt_says_names_are_real_not_diarized() -> None:
+    prompt = prompts.build_ingested_analysis_prompt(_ingested_meta(), "tx", [], 900.0)
+    assert "REAL names" in prompt
+    assert "SPEAKER_" not in prompt
+
+
+def test_ingested_prompt_explains_absent_frames_as_expected() -> None:
+    flat = " ".join(
+        prompts.build_ingested_analysis_prompt(
+            _ingested_meta(), "tx", [], 900.0
+        ).split()
+    )
+    assert "Nobody shared a screen" in flat
+    assert "expected, not a defect" in flat
+    assert "do not speculate about visual content" in flat.lower()
+
+
+def test_ingested_prompt_frames_block_appears_when_frames_exist() -> None:
+    inv = [{"file": "000001_100206.jpg", "source": "fathom"}]
+    prompt = prompts.build_ingested_analysis_prompt(
+        _ingested_meta(frames_status="extracted"), "tx", inv, 900.0
+    )
+    assert "ONLY" in prompt and "copy of what was on it" in prompt
+    assert "000001_100206.jpg" in prompt
+    assert "Nobody shared a screen" not in prompt
+
+
+def test_ingested_prompt_register_carries_the_missing_context_note() -> None:
+    prompt = prompts.build_ingested_analysis_prompt(
+        _ingested_meta(), "tx", [], 900.0, register_md="== threads\nfocus: retry queue"
+    )
+    assert "retry queue" in prompt
+    assert "ONLY grounding" in prompt
+
+
+def test_ingested_prompt_handles_an_unknown_roster() -> None:
+    prompt = prompts.build_ingested_analysis_prompt(
+        _ingested_meta(participants=[], host_email=""), "tx", [], 900.0
+    )
+    assert "named no speakers" in prompt
+
+
 def test_commit_prompt_instructs_single_commit_and_id_reply() -> None:
     meta = {"title": "Weekly Sync", "started_at": "2026-07-05T14:30:00", "context_note": "billing"}
     p = prompts.build_commit_prompt(FULL_SUMMARY, meta)
